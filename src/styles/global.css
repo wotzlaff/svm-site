@@ -8,7 +8,7 @@
   --surface-2: #eef1f6;
   --ink: #141a26;
   --ink-2: #3b4559;
-  --muted: #667085;
+  --muted: #5b6577;
   --line: #dde2ea;
   --accent: #1d4ed8;
   --accent-2: #c2410c;
@@ -99,6 +99,33 @@ h3 {
 p {
   margin: 0 0 1em;
   color: var(--ink-2);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 20;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 a {

@@ -3,24 +3,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 <div class="demo card" data-wasm={`${base}/wasm/smo_solver_wasm.wasm`}>
   <div class="demo-canvas">
-    <canvas width="560" height="560" aria-label="Training data and decision function"></canvas>
-    <p class="hint">Click to add a point of the selected class, right-click (or shift-click) for the other class.</p>
+    <canvas width="560" height="560" tabindex="0" role="application" aria-label="Training data and decision function" aria-describedby="demo-hint"></canvas>
+    <p class="hint" id="demo-hint">Click to add a point of the selected class, right-click (or shift-click) for the other class. With the keyboard: arrow keys move the cursor (hold Shift for larger steps), Enter adds a point, Shift+Enter adds one of the other class, Backspace removes the last point.</p>
   </div>
   <div class="demo-panel">
     <div class="row">
       <span class="label">Data</span>
-      <div class="chips" data-presets>
-        <button class="chip active" data-preset="checkerboard">Checkerboard</button>
-        <button class="chip" data-preset="moons">Moons</button>
-        <button class="chip" data-preset="rings">Rings</button>
-        <button class="chip" data-preset="clear">Empty</button>
+      <div class="chips" data-presets role="group" aria-label="Data set">
+        <button class="chip active" data-preset="checkerboard" aria-pressed="true">Checkerboard</button>
+        <button class="chip" data-preset="moons" aria-pressed="false">Moons</button>
+        <button class="chip" data-preset="rings" aria-pressed="false">Rings</button>
+        <button class="chip" data-preset="clear" aria-pressed="false">Empty</button>
       </div>
     </div>
     <div class="row">
       <span class="label">Click adds</span>
-      <div class="chips" data-classes>
-        <button class="chip active" data-class="1"><i class="dot pos"></i> class +1</button>
-        <button class="chip" data-class="-1"><i class="dot neg"></i> class −1</button>
+      <div class="chips" data-classes role="group" aria-label="Class added on click">
+        <button class="chip active" data-class="1" aria-pressed="true"><i class="dot pos"></i> class +1</button>
+        <button class="chip" data-class="-1" aria-pressed="false"><i class="dot neg"></i> class −1</button>
       </div>
     </div>
     <label class="slider">
@@ -35,7 +35,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <span>Loss smoothing δ <output data-out="smoothing"></output></span>
       <input type="range" min="0" max="1" step="0.05" value="0" data-param="smoothing" />
     </label>
-    <dl class="stats">
+    <dl class="stats" aria-live="polite">
       <div><dt>samples</dt><dd data-stat="n">–</dd></div>
       <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
       <div><dt>SMO steps</dt><dd data-stat="steps">–</dd></div>
@@ -70,6 +70,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   let points: { x: number; y: number; c: number }[] = [];
   let clickClass = 1;
   let pending = 0;
+  let keyboardActive = false;
 
   // deterministic random numbers so that presets look the same on every visit
   function rng(seed: number) {
@@ -131,7 +132,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     return x >= 0.01 && x < 1000 ? x.toPrecision(3) : x.toExponential(1);
   }
 
+  let last: { dec: Float64Array | null; sv: Set<number> } = { dec: null, sv: new Set() };
+  const cursor = { x: 0.5, y: 0.5 };
+
   function render(dec: Float64Array | null, sv: Set<number>) {
+    last = { dec, sv };
     const W = canvas.width, H = canvas.height;
     const bg = hexToRgb(css("--surface") || "#ffffff");
     const pos = hexToRgb(css("--accent") || "#1d4ed8");
@@ -198,6 +203,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         ctx.stroke();
       }
     });
+    if (document.activeElement === canvas && keyboardActive) {
+      const x = cursor.x * W, y = (1 - cursor.y) * H;
+      ctx.strokeStyle = css("--ink");
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, 2 * Math.PI);
+      ctx.moveTo(x - 16, y);
+      ctx.lineTo(x + 16, y);
+      ctx.moveTo(x, y - 16);
+      ctx.lineTo(x, y + 16);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 
   function train() {
@@ -256,7 +275,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   function activate(group: Element, button: Element) {
-    group.querySelectorAll(".chip").forEach((b) => b.classList.toggle("active", b === button));
+    group.querySelectorAll(".chip").forEach((b) => {
+      b.classList.toggle("active", b === button);
+      b.setAttribute("aria-pressed", String(b === button));
+    });
   }
 
   root.querySelectorAll("[data-param]").forEach((el) => el.addEventListener("input", schedule));
@@ -279,7 +301,37 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     points.push({ x, y, c: flip ? -clickClass : clickClass });
     schedule();
   }
-  canvas.addEventListener("click", (ev) => addPoint(ev, ev.shiftKey));
+  canvas.addEventListener("click", (ev) => {
+    keyboardActive = false;
+    addPoint(ev, ev.shiftKey);
+  });
+  canvas.addEventListener("keydown", (ev) => {
+    const step = ev.shiftKey && !["Enter", " "].includes(ev.key) ? 0.1 : 0.02;
+    const move: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step],
+    };
+    if (ev.key in move) {
+      const [dx, dy] = move[ev.key];
+      cursor.x = Math.min(1, Math.max(0, cursor.x + dx));
+      cursor.y = Math.min(1, Math.max(0, cursor.y + dy));
+    } else if (ev.key === "Enter" || ev.key === " ") {
+      points.push({ x: cursor.x, y: cursor.y, c: ev.shiftKey ? -clickClass : clickClass });
+      schedule();
+    } else if (ev.key === "Backspace" || ev.key === "Delete") {
+      points.pop();
+      schedule();
+    } else {
+      return;
+    }
+    ev.preventDefault();
+    keyboardActive = true;
+    render(last.dec, last.sv);
+  });
+  canvas.addEventListener("focus", () => {
+    keyboardActive = true;
+    render(last.dec, last.sv);
+  });
+  canvas.addEventListener("blur", () => render(last.dec, last.sv));
   canvas.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
     addPoint(ev, true);
@@ -308,6 +360,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     .demo {
       grid-template-columns: 1fr;
     }
+  }
+  canvas:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
   }
   canvas {
     width: 100%;
