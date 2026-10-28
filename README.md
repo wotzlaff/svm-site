@@ -27,7 +27,6 @@ npm run build      # static output in dist/
 
 ## TODO
 
-- link the published PDF and complete the BibTeX entry (`src/data/thesis.ts`)
 - set `site`/`base` in `astro.config.mjs` if a custom domain is used
 
 Deployment: GitHub Actions (`.github/workflows/deploy.yml`) publishes `dist/` to GitHub Pages

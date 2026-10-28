@@ -17,7 +17,7 @@ const description =
   <section class="hero">
     <div class="wrap hero-grid">
       <div>
-        <p class="eyebrow">Doctoral thesis · {thesis.institution}</p>
+        <p class="eyebrow">Doctoral thesis · {thesis.institution} · {thesis.year}</p>
         <h1>{thesis.title}</h1>
         <p class="author">{thesis.author}</p>
         <p class="lead">
@@ -260,10 +260,15 @@ OptimizedSVC(blocks="features").fit(X, y)</code></pre>
       </div>
       <div>
         <h3>Cite</h3>
+        <p>
+          N. Strasdat. <em>{thesis.title}.</em> Dissertation, Technische Universität Dresden,
+          {thesis.year}. <a href={thesis.url}>{thesis.urn}</a>
+        </p>
         <pre><code>{thesis.bibtex}</code></pre>
-        {thesis.pdf
-          ? <a class="btn primary" href={thesis.pdf}>Download PDF</a>
-          : <p class="muted">The full text will be linked here once it is published.</p>}
+        <div class="actions">
+          {thesis.pdf && <a class="btn primary" href={thesis.pdf}>Download PDF</a>}
+          <a class="btn" href={thesis.url}>Qucosa record</a>
+        </div>
       </div>
     </div>
   </section>

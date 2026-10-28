@@ -5,15 +5,19 @@ export const thesis = {
     "Duality, Derivative-Based Training Methods and Hyperparameter Optimization for Support Vector Machines",
   author: "Nico Strasdat",
   institution: "TU Dresden",
-  // TODO: link the published PDF (e.g. Qucosa) once available
-  pdf: null as string | null,
-  // TODO: complete year/type/URN of the publication
-  bibtex: `@phdthesis{strasdat-svm,
+  year: 2023,
+  urn: "urn:nbn:de:bsz:14-qucosa2-874731",
+  url: "https://nbn-resolving.org/urn:nbn:de:bsz:14-qucosa2-874731",
+  pdf: "https://tud.qucosa.de/api/qucosa%3A87473/attachment/ATT-0/" as string | null,
+  bibtex: `@phdthesis{strasdat2023,
   author = {Nico Strasdat},
   title  = {Duality, Derivative-Based Training Methods and
             Hyperparameter Optimization for Support Vector Machines},
-  school = {TU Dresden},
-  year   = {TODO}
+  school = {Technische Universit{\\"a}t Dresden},
+  type   = {Dissertation},
+  year   = {2023},
+  url    = {https://nbn-resolving.org/urn:nbn:de:bsz:14-qucosa2-874731},
+  note   = {urn:nbn:de:bsz:14-qucosa2-874731}
 }`,
 };
 
