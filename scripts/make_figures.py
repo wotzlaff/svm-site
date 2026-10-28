@@ -8,6 +8,8 @@ Run from the repository root with an environment that has `optimized-svm` and `m
 from __future__ import annotations
 
 import json
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import matplotlib
@@ -39,6 +41,19 @@ def checkerboard(n: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
     return x, np.where(flip, -y, y)
 
 
+def grid_row(lg, lams, x, labels, folds):
+    """CV errors for one value of log10 gamma (warm-started from large to small lambda)."""
+    loss, validation = HingeLoss(smoothing=0.5), SmoothHingeValidation()
+    warm = [None] * len(folds)
+    row = []
+    for ll in lams[::-1]:
+        theta = np.array([ll * np.log(10), 0.5 * lg * np.log(10)])
+        row.append(cv_error_and_gradient(theta, x, labels, np.ones(len(labels)), folds, loss,
+                                          validation, warm_start=warm).error)
+    print(f"row log10 gamma = {lg:.2f} done", flush=True)
+    return row[::-1]
+
+
 def style(ax, t):
     ax.tick_params(colors=t["muted"], labelsize=9)
     for s in ax.spines.values():
@@ -52,19 +67,12 @@ def main() -> None:
     x, y = checkerboard(500)
     labels = y.astype(float)
     folds = list(StratifiedKFold(5, shuffle=True, random_state=0).split(x, y))
-    loss, validation = HingeLoss(smoothing=0.5), SmoothHingeValidation()
-
     # CV error landscape over (log10 lam, log10 gamma), gamma = s^2
-    lams = np.linspace(-5, 0, 21)
-    gammas = np.linspace(0, 3, 21)
-    err = np.zeros((gammas.size, lams.size))
-    warm = [None] * len(folds)
-    for i, lg in enumerate(gammas):
-        for j, ll in enumerate(lams):
-            theta = np.array([ll * np.log(10), 0.5 * lg * np.log(10)])
-            err[i, j] = cv_error_and_gradient(theta, x, labels, np.ones(len(y)), folds, loss,
-                                              validation, warm_start=warm).error
-        print(f"grid row {i + 1}/{gammas.size}", flush=True)
+    lams = np.linspace(-4.5, 0, 19)
+    gammas = np.linspace(0, 3, 19)
+    with ProcessPoolExecutor() as pool:
+        rows = pool.map(partial(grid_row, lams=lams, x=x, labels=labels, folds=folds), gammas)
+        err = np.array(list(rows))
 
     model = OptimizedSVC(lam_init=1e-1, scaling_init=1.5, cv=folds).fit(x, y)
     path = np.array([[np.log10(h["lam"]), np.log10(h["scaling"][0] ** 2)] for h in model.history_])

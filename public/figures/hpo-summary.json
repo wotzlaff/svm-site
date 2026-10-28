@@ -1,1 +1,7 @@
-{"lam":0.001,"gamma":30,"evaluations":0,"grid_points":441,"cv_error":0}
+{
+  "lam": 0.07134599525310907,
+  "gamma": 40.93459628274841,
+  "evaluations": 21,
+  "grid_points": 361,
+  "cv_error": 0.37248048657243965
+}

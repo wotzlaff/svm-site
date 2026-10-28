@@ -57,7 +57,7 @@ const description =
           <span class="num">1</span>
           <h3>A general duality framework</h3>
           <p>
-            Fenchel duality is applied to a general training problem. For the standard problem
+            Fenchel duality is applied to a general training problem. For the standard problem{" "}
             <TeX tex={String.raw`\min_{w,b}\ \tfrac{\lambda}{2}\|w\|^2 + \sum_i \ell_i(\langle w,\varphi(x_i)\rangle + b)`} />
             the dual reads
           </p>
@@ -84,7 +84,7 @@ const description =
           <span class="num">3</span>
           <h3>Newton's method for the primal</h3>
           <p>
-            Smoothing the loss with
+            Smoothing the loss with{" "}
             <TeX tex={String.raw`m_\delta(t) \approx \max\{0,t\}`} /> turns the primal training problem into a
             (semi)smooth system of equations
           </p>
@@ -132,8 +132,8 @@ const description =
         <p>
           The figure shows the 5-fold cross-validation error of a smoothed SVM on the checkerboard data as
           a function of λ and γ, computed on a {Math.round(Math.sqrt(hpo.grid_points))}×{Math.round(Math.sqrt(hpo.grid_points))} grid
-          ({hpo.grid_points} evaluations). The gradient-based method (L-BFGS-B on
-          <TeX tex={String.raw`(\log\lambda,\log\gamma)`} />) reaches the optimum after only
+          ({hpo.grid_points} evaluations). The gradient-based method (L-BFGS-B on{" "}
+          <TeX tex={String.raw`(\log\lambda,\log\gamma)`} />) reaches the optimum after only{" "}
           <strong>{hpo.evaluations} evaluations</strong> of the CV error and its gradient.
         </p>
         <p>
