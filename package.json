@@ -7,7 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "wasm": "cargo build --profile wasm -p svm-smo-wasm --target wasm32-unknown-unknown --manifest-path ../svm-smo/Cargo.toml && cp ../svm-smo/target/wasm32-unknown-unknown/wasm/svm_smo_wasm.wasm public/wasm/"
+    "wasm": "cargo build --profile wasm -p smo-solver-wasm --target wasm32-unknown-unknown --manifest-path ../smo-solver/Cargo.toml && cp ../smo-solver/target/wasm32-unknown-unknown/wasm/smo_solver_wasm.wasm public/wasm/"
   },
   "dependencies": {
     "astro": "^7.4.2",

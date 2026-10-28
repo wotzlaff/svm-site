@@ -214,18 +214,18 @@ model.history_                   # every CV evaluation</code></pre>
       <p class="lead">The methods of the thesis are available as two tested, documented packages.</p>
       <div class="grid grid-2">
         <article class="card pkg">
-          <h3>svm-smo <span class="tag">Rust · Python</span></h3>
+          <h3>smo-solver <span class="tag">Rust · Python</span></h3>
           <p>
             Fast SMO solver for a general class of SVM duals: smoothed hinge and ε-insensitive losses,
             least squares, sample weights and a ν-type constraint. Second-order working sets,
             shrinking, kernel cache, warm starts; scikit-learn estimators; also compiled to
             WebAssembly for the demo above.
           </p>
-          <pre><code>pip install svm-smo
+          <pre><code>pip install smo-solver
 
-from svm_smo import SmoSVC
+from smo_solver import SmoSVC
 SmoSVC(lam=0.01, smoothing=0.1).fit(X, y)</code></pre>
-          <p class="links"><a href="https://github.com/wotzlaff/svm-smo">GitHub</a></p>
+          <p class="links"><a href="https://github.com/wotzlaff/smo-solver">GitHub</a></p>
         </article>
         <article class="card pkg">
           <h3>optimized-svm <span class="tag">Python</span></h3>

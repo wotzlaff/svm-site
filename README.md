@@ -2,11 +2,11 @@
 
 Project website for the dissertation *Duality, Derivative-Based Training Methods and
 Hyperparameter Optimization for Support Vector Machines* (Nico Strasdat) and the packages
-[`svm-smo`](https://github.com/wotzlaff/svm-smo) and
+[`smo-solver`](https://github.com/wotzlaff/smo-solver) and
 [`optimized-svm`](https://github.com/wotzlaff/optimized-svm).
 
 Static site built with [Astro](https://astro.build); formulas are rendered at build time with
-KaTeX, the interactive demo runs the `svm-smo` solver compiled to WebAssembly.
+KaTeX, the interactive demo runs the `smo-solver` solver compiled to WebAssembly.
 
 ## Development
 
@@ -20,7 +20,7 @@ npm run build      # static output in dist/
 
 | path | origin |
 |---|---|
-| `public/wasm/svm_smo_wasm.wasm` | `npm run wasm` (needs the sibling checkout `../svm-smo` and the Rust target `wasm32-unknown-unknown`) |
+| `public/wasm/smo_solver_wasm.wasm` | `npm run wasm` (needs the sibling checkout `../smo-solver` and the Rust target `wasm32-unknown-unknown`) |
 | `public/figures/*-{light,dark}.svg`, `hpo-summary.json` | `python scripts/make_figures.py` (needs `optimized-svm` and `matplotlib`) |
 | `public/figures/thesis/*.png` | figures of the dissertation |
 | `src/data/thesis.ts` | chapter outline, BibTeX and Table 10.4.1 |

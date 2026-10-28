@@ -1,7 +1,7 @@
 ---
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
-<div class="demo card" data-wasm={`${base}/wasm/svm_smo_wasm.wasm`}>
+<div class="demo card" data-wasm={`${base}/wasm/smo_solver_wasm.wasm`}>
   <div class="demo-canvas">
     <canvas width="560" height="560" aria-label="Training data and decision function"></canvas>
     <p class="hint">Click to add a point of the selected class, right-click (or shift-click) for the other class.</p>
@@ -44,7 +44,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><dt>duality gap</dt><dd data-stat="gap">–</dd></div>
     </dl>
     <p class="note">
-      Runs the Rust solver <code>svm-smo</code> compiled to WebAssembly (66 KB) directly in your
+      Runs the Rust solver <code>smo-solver</code> compiled to WebAssembly (66 KB) directly in your
       browser. Ringed points are support vectors.
     </p>
   </div>
