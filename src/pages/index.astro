@@ -1,0 +1,371 @@
+---
+import Base from "../layouts/Base.astro";
+import TeX from "../components/Math.astro";
+import Demo from "../components/Demo.astro";
+import { thesis, chapters, regressionTable } from "../data/thesis";
+import hpo from "../../public/figures/hpo-summary.json";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const fig = (p: string) => `${base}/figures/${p}`;
+const models = ["ε = 0.1", "ε = 0.25", "ε = 0.5", "LS-SVM"];
+const best = (row: number[]) => row.indexOf(Math.min(...row));
+const description =
+  "Duality theory, SMO and Newton training methods and gradient-based hyperparameter optimization for support vector machines — dissertation summary, interactive demo and open-source software.";
+---
+
+<Base title="Duality, Derivative-Based Training and Hyperparameter Optimization for SVMs" description={description}>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Doctoral thesis · {thesis.institution}</p>
+        <h1>{thesis.title}</h1>
+        <p class="author">{thesis.author}</p>
+        <p class="lead">
+          Support vector machines are trained by solving a convex optimization problem — and tuned by
+          searching a grid of hyperparameters. This thesis develops a general duality framework, analyses
+          and improves the classical SMO method, introduces a Newton method for the primal problem and
+          shows that, with suitably <em>smoothed</em> losses, the cross-validation error becomes
+          differentiable in the hyperparameters. Grid search can then be replaced by gradient-based
+          optimization, even for one kernel width per feature.
+        </p>
+        <div class="actions">
+          {thesis.pdf
+            ? <a class="btn primary" href={thesis.pdf}>Read the thesis (PDF)</a>
+            : <a class="btn primary" href="#thesis">About the thesis</a>}
+          <a class="btn" href="#demo">Try the demo</a>
+          <a class="btn" href="#software">Python &amp; Rust packages</a>
+        </div>
+      </div>
+      <figure class="hero-fig card">
+        <img class="theme-img light" src={fig("checkerboard-light.svg")} alt="Decision boundary of an optimized SVM on a checkerboard dataset" width="400" height="400" />
+        <img class="theme-img dark" src={fig("checkerboard-dark.svg")} alt="" width="400" height="400" />
+        <figcaption>
+          Checkerboard data of the computational study, classified with hyperparameters found by
+          gradient descent on the CV error (λ = {hpo.lam.toPrecision(2)}, γ = {hpo.gamma.toPrecision(3)}).
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="ideas">
+    <div class="wrap">
+      <p class="eyebrow">Main ideas</p>
+      <h2>From duality to differentiable hyperparameters</h2>
+      <p class="lead">The thesis follows one training problem through theory, algorithms and practice.</p>
+      <div class="grid grid-2 ideas">
+        <article class="card">
+          <span class="num">1</span>
+          <h3>A general duality framework</h3>
+          <p>
+            Fenchel duality is applied to a general training problem. For the standard problem
+            <TeX tex={String.raw`\min_{w,b}\ \tfrac{\lambda}{2}\|w\|^2 + \sum_i \ell_i(\langle w,\varphi(x_i)\rangle + b)`} />
+            the dual reads
+          </p>
+          <TeX block tex={String.raw`\min_{\alpha}\ \frac{1}{2\lambda}\alpha^\top K\alpha + \sum_{i=1}^n \ell_i^\star(-\alpha_i)\quad\text{s.t.}\quad \mathbf 1^\top\alpha = 0,`} />
+          <p>
+            covering classification, regression, multi-class, ν- and subspace SVMs — together with
+            optimality conditions, representer theorem and uniqueness results (Ch. 2–6).
+          </p>
+        </article>
+        <article class="card">
+          <span class="num">2</span>
+          <h3>SMO, revisited</h3>
+          <p>
+            A general convergence framework for decomposition methods proves convergence of SMO under
+            mild assumptions. A new <strong>bound-aware violation measure</strong>
+          </p>
+          <TeX block tex={String.raw`r^\diamond(\alpha,\rho) = \max_{i,j}\ \min\{\epsilon^{ij}(\alpha),\rho\}\,\big(b_i^-(\alpha) - b_j^+(\alpha)\big)`} />
+          <p>
+            leads to working set rules and to a theoretically founded detection of variables that can
+            be fixed — the basis of <strong>shrinking</strong> (Ch. 7).
+          </p>
+        </article>
+        <article class="card">
+          <span class="num">3</span>
+          <h3>Newton's method for the primal</h3>
+          <p>
+            Smoothing the loss with
+            <TeX tex={String.raw`m_\delta(t) \approx \max\{0,t\}`} /> turns the primal training problem into a
+            (semi)smooth system of equations
+          </p>
+          <TeX block tex={String.raw`a + \ell'\!\big(\tfrac{1}{\lambda}Ka + b\mathbf 1\big) = 0,\qquad \mathbf 1^\top a = 0,`} />
+          <p>
+            which a Newton method solves accurately in few steps, efficiently restricted to the
+            terms with positive curvature (Ch. 4, 6, 8).
+          </p>
+        </article>
+        <article class="card">
+          <span class="num">4</span>
+          <h3>Hyperparameters by gradient descent</h3>
+          <p>
+            Hyperparameter selection is a bilevel problem. The implicit function theorem applied to the
+            smoothed optimality system yields exact gradients of the validation error,
+          </p>
+          <TeX block tex={String.raw`\frac{\partial E}{\partial\theta} = -u^\top \partial_\theta(\mathrm{ka})_P + \nabla L^\top \partial_\theta f_V,\qquad H u = K_{VP}^\top\nabla L/\lambda,`} />
+          <p>
+            with a single adjoint system per fold — so λ and one kernel scaling per feature can be
+            optimized with quasi-Newton methods (Ch. 9, 10).
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="demo">
+    <div class="wrap">
+      <p class="eyebrow">Interactive</p>
+      <h2>Train an SVM in your browser</h2>
+      <p class="lead">
+        Move the sliders to see how regularization λ and kernel width γ shape the decision function —
+        the trade-off that hyperparameter optimization has to resolve. With δ &gt; 0 the hinge loss is
+        smoothed, which makes the solution differentiable in the hyperparameters.
+      </p>
+      <Demo />
+    </div>
+  </section>
+
+  <section id="hpo">
+    <div class="wrap grid grid-2 hpo">
+      <div>
+        <p class="eyebrow">Hyperparameter optimization</p>
+        <h2>Follow the gradient instead of the grid</h2>
+        <p>
+          The figure shows the 5-fold cross-validation error of a smoothed SVM on the checkerboard data as
+          a function of λ and γ, computed on a {Math.round(Math.sqrt(hpo.grid_points))}×{Math.round(Math.sqrt(hpo.grid_points))} grid
+          ({hpo.grid_points} evaluations). The gradient-based method (L-BFGS-B on
+          <TeX tex={String.raw`(\log\lambda,\log\gamma)`} />) reaches the optimum after only
+          <strong>{hpo.evaluations} evaluations</strong> of the CV error and its gradient.
+        </p>
+        <p>
+          The cost of a gradient is that of one additional linear system per fold, independent of the
+          number of hyperparameters. This makes per-feature kernel scalings (automatic relevance
+          determination) practical: on the Friedman #1 benchmark the optimized scalings of the five
+          noise features drop to near zero.
+        </p>
+        <pre><code>from optimized_svm import OptimizedSVR
+
+model = OptimizedSVR(blocks="features").fit(X, y)
+model.lam_, model.scaling_opt_   # optimized hyperparameters
+model.history_                   # every CV evaluation</code></pre>
+      </div>
+      <figure class="card">
+        <img class="theme-img light" src={fig("hpo-landscape-light.svg")} alt="Contour plot of the cross-validation error over log lambda and log gamma with the optimization path" width="520" height="400" />
+        <img class="theme-img dark" src={fig("hpo-landscape-dark.svg")} alt="" width="520" height="400" />
+        <figcaption>CV error landscape and the path of the gradient-based optimizer.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="wrap">
+      <p class="eyebrow">Computational study</p>
+      <h2>Selected results</h2>
+      <div class="grid grid-2 gallery">
+        <figure class="card">
+          <div class="paper"><img src={fig("thesis/decision-boundaries.png")} alt="Grid of decision boundaries for different lambda and gamma" loading="lazy" /></div>
+          <figcaption><strong>Fig. 10.1.2</strong> Decision boundaries on the checkerboard data for different λ and γ: too small γ underfits, too large γ produces wiggly boundaries.</figcaption>
+        </figure>
+        <div class="grid">
+          <figure class="card">
+            <div class="paper"><img src={fig("thesis/working-set-gap.png")} alt="Primal-dual gap over SMO steps for second-order working set rules" loading="lazy" /></div>
+            <figcaption><strong>Fig. 10.2.2</strong> Primal–dual gap of SMO for second-order working set rules (MDP, MuDP, total MDP).</figcaption>
+          </figure>
+          <figure class="card">
+            <div class="paper"><img src={fig("thesis/newton-vs-smo.png")} alt="Runtime of Newton's method and SMO for growing problem size" loading="lazy" /></div>
+            <figcaption><strong>Sec. 10.3.3</strong> Runtime of the primal Newton method and SMO: comparable over a wide range of λ and problem sizes.</figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <h3 class="table-title">Hyperparameter optimization on real regression data (Table 10.4.1)</h3>
+      <p>
+        Test errors (mean over 30 random 80/20 splits) of the smoothed ε-SVR and the LS-SVM with λ and γ
+        optimized by the gradient method. Best value per row in bold. * random subsample of 1,000 points.
+        The protocol is reproducible with <code>benchmarks/thesis_regression.py</code> in
+        <code>optimized-svm</code>.
+      </p>
+      <div class="card table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">dataset</th><th rowspan="2">n</th>
+              <th colspan="4" class="group">MSE</th><th colspan="4" class="group">MAE</th>
+            </tr>
+            <tr>{[...models, ...models].map((m) => <th>{m}</th>)}</tr>
+          </thead>
+          <tbody>
+            {regressionTable.map((r) => (
+              <tr>
+                <td>{r.name}</td><td>{r.n}</td>
+                {r.mse.map((v, i) => <td class={i === best(r.mse) ? "best" : ""}>{v}</td>)}
+                {r.mae.map((v, i) => <td class={i === best(r.mae) ? "best" : ""}>{v}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="software">
+    <div class="wrap">
+      <p class="eyebrow">Open source</p>
+      <h2>Software</h2>
+      <p class="lead">The methods of the thesis are available as two tested, documented packages.</p>
+      <div class="grid grid-2">
+        <article class="card pkg">
+          <h3>svm-smo <span class="tag">Rust · Python</span></h3>
+          <p>
+            Fast SMO solver for a general class of SVM duals: smoothed hinge and ε-insensitive losses,
+            least squares, sample weights and a ν-type constraint. Second-order working sets,
+            shrinking, kernel cache, warm starts; scikit-learn estimators; also compiled to
+            WebAssembly for the demo above.
+          </p>
+          <pre><code>pip install svm-smo
+
+from svm_smo import SmoSVC
+SmoSVC(lam=0.01, smoothing=0.1).fit(X, y)</code></pre>
+          <p class="links"><a href="https://github.com/wotzlaff/svm-smo">GitHub</a></p>
+        </article>
+        <article class="card pkg">
+          <h3>optimized-svm <span class="tag">Python</span></h3>
+          <p>
+            SVMs whose regularization and kernel scalings are tuned by exact gradients of the
+            cross-validation error. SMO warm start plus Newton refinement, ARD kernels, Poisson
+            regression, time limits and full optimization history.
+          </p>
+          <pre><code>pip install optimized-svm
+
+from optimized_svm import OptimizedSVC
+OptimizedSVC(blocks="features").fit(X, y)</code></pre>
+          <p class="links">
+            <a href="https://github.com/wotzlaff/optimized-svm">GitHub</a> ·
+            <a href="https://wotzlaff.github.io/optimized-svm/">Documentation</a>
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="thesis">
+    <div class="wrap grid grid-2">
+      <div>
+        <p class="eyebrow">The thesis</p>
+        <h2>Contents</h2>
+        <ol class="chapters">
+          {chapters.map((c) => (
+            <li><strong>{c.title}</strong>{c.summary && <span> — {c.summary}</span>}</li>
+          ))}
+        </ol>
+      </div>
+      <div>
+        <h3>Cite</h3>
+        <pre><code>{thesis.bibtex}</code></pre>
+        {thesis.pdf
+          ? <a class="btn primary" href={thesis.pdf}>Download PDF</a>
+          : <p class="muted">The full text will be linked here once it is published.</p>}
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    padding: 4rem 0 4.5rem;
+    background: radial-gradient(1200px 400px at 85% 0%, var(--accent-soft), transparent 70%);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: center;
+  }
+  @media (max-width: 900px) {
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.2vw, 3rem);
+  }
+  .author {
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 1.2rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.6rem;
+  }
+  .hero-fig img {
+    width: 100%;
+  }
+  .ideas .card {
+    position: relative;
+  }
+  .num {
+    position: absolute;
+    top: 1.1rem;
+    right: 1.3rem;
+    font-family: var(--serif);
+    font-size: 2rem;
+    color: var(--line);
+    font-weight: 700;
+  }
+  .ideas h3 {
+    padding-right: 2rem;
+  }
+  .hpo {
+    align-items: center;
+  }
+  .gallery {
+    align-items: start;
+    margin-bottom: 3rem;
+  }
+  .table-title {
+    margin-top: 1rem;
+  }
+  th.group {
+    text-align: center;
+    border-bottom: 1px solid var(--line);
+  }
+  td.best {
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .pkg h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .tag {
+    font-family: var(--sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .links {
+    margin: 0;
+  }
+  .chapters {
+    padding-left: 1.3rem;
+    color: var(--ink-2);
+  }
+  .chapters li {
+    margin-bottom: 0.45rem;
+  }
+  .chapters strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .muted {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+</style>

@@ -1,0 +1,407 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="demo card" data-wasm={`${base}/wasm/svm_smo_wasm.wasm`}>
+  <div class="demo-canvas">
+    <canvas width="560" height="560" aria-label="Training data and decision function"></canvas>
+    <p class="hint">Click to add a point of the selected class, right-click (or shift-click) for the other class.</p>
+  </div>
+  <div class="demo-panel">
+    <div class="row">
+      <span class="label">Data</span>
+      <div class="chips" data-presets>
+        <button class="chip active" data-preset="checkerboard">Checkerboard</button>
+        <button class="chip" data-preset="moons">Moons</button>
+        <button class="chip" data-preset="rings">Rings</button>
+        <button class="chip" data-preset="clear">Empty</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="label">Click adds</span>
+      <div class="chips" data-classes>
+        <button class="chip active" data-class="1"><i class="dot pos"></i> class +1</button>
+        <button class="chip" data-class="-1"><i class="dot neg"></i> class −1</button>
+      </div>
+    </div>
+    <label class="slider">
+      <span>Regularization λ <output data-out="lam"></output></span>
+      <input type="range" min="-5" max="0" step="0.1" value="-3" data-param="lam" />
+    </label>
+    <label class="slider">
+      <span>Kernel width γ <output data-out="gamma"></output></span>
+      <input type="range" min="-1" max="3" step="0.05" value="1.5" data-param="gamma" />
+    </label>
+    <label class="slider">
+      <span>Loss smoothing δ <output data-out="smoothing"></output></span>
+      <input type="range" min="0" max="1" step="0.05" value="0" data-param="smoothing" />
+    </label>
+    <dl class="stats">
+      <div><dt>samples</dt><dd data-stat="n">–</dd></div>
+      <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
+      <div><dt>SMO steps</dt><dd data-stat="steps">–</dd></div>
+      <div><dt>training time</dt><dd data-stat="time">–</dd></div>
+      <div><dt>training accuracy</dt><dd data-stat="acc">–</dd></div>
+      <div><dt>duality gap</dt><dd data-stat="gap">–</dd></div>
+    </dl>
+    <p class="note">
+      Runs the Rust solver <code>svm-smo</code> compiled to WebAssembly (66 KB) directly in your
+      browser. Ringed points are support vectors.
+    </p>
+  </div>
+</div>
+
+<script>
+  type Exports = {
+    memory: WebAssembly.Memory;
+    alloc(n: number): number;
+    dealloc(ptr: number, n: number): void;
+    train(x: number, n: number, dim: number, y: number, kind: number, lam: number, gamma: number,
+          smoothing: number, epsilon: number, tol: number): bigint;
+    decision(p: number, m: number, out: number): number;
+    support(out: number): bigint;
+    stat(which: number): number;
+  };
+
+  const root = document.querySelector<HTMLElement>(".demo")!;
+  const canvas = root.querySelector("canvas")!;
+  const ctx = canvas.getContext("2d")!;
+  const RES = 112; // decision function grid resolution
+  let wasm: Exports | null = null;
+  let points: { x: number; y: number; c: number }[] = [];
+  let clickClass = 1;
+  let pending = 0;
+
+  // deterministic random numbers so that presets look the same on every visit
+  function rng(seed: number) {
+    return () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+  }
+
+  function preset(name: string) {
+    const r = rng(7);
+    const pts: typeof points = [];
+    const gauss = () => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
+    if (name === "checkerboard") {
+      for (let i = 0; i < 300; i++) {
+        const x = r(), y = r();
+        const s = Math.sin(4 * Math.PI * x) * Math.sin(4 * Math.PI * y);
+        pts.push({ x, y, c: (s > 0 ? 1 : -1) * (r() < 0.04 ? -1 : 1) });
+      }
+    } else if (name === "moons") {
+      for (let i = 0; i < 240; i++) {
+        const t = Math.PI * r(), up = i % 2 === 0;
+        const x = up ? Math.cos(t) : 1 - Math.cos(t);
+        const y = up ? Math.sin(t) : 0.5 - Math.sin(t);
+        pts.push({ x: 0.2 + 0.3 * x + 0.03 * gauss(), y: 0.35 + 0.35 * y + 0.03 * gauss(), c: up ? 1 : -1 });
+      }
+    } else if (name === "rings") {
+      for (let i = 0; i < 260; i++) {
+        const inner = i % 2 === 0, t = 2 * Math.PI * r();
+        const rad = (inner ? 0.15 : 0.36) + 0.035 * gauss();
+        pts.push({ x: 0.5 + rad * Math.cos(t), y: 0.5 + rad * Math.sin(t), c: inner ? 1 : -1 });
+      }
+    }
+    points = pts;
+  }
+
+  function params() {
+    const v = (k: string) => Number(root.querySelector<HTMLInputElement>(`[data-param=${k}]`)!.value);
+    return { lam: 10 ** v("lam"), gamma: 10 ** v("gamma"), smoothing: v("smoothing") };
+  }
+
+  function css(name: string) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // any CSS colour (e.g. "#fff", minified by the build) -> [r, g, b]
+  function hexToRgb(color: string): [number, number, number] {
+    ctx.fillStyle = "#000";
+    ctx.fillStyle = color;
+    const h = String(ctx.fillStyle).replace("#", "");
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
+  }
+
+  function setStat(k: string, v: string) {
+    root.querySelector(`[data-stat=${k}]`)!.textContent = v;
+  }
+
+  function fmt(x: number) {
+    return x >= 0.01 && x < 1000 ? x.toPrecision(3) : x.toExponential(1);
+  }
+
+  function render(dec: Float64Array | null, sv: Set<number>) {
+    const W = canvas.width, H = canvas.height;
+    const bg = hexToRgb(css("--surface") || "#ffffff");
+    const pos = hexToRgb(css("--accent") || "#1d4ed8");
+    const neg = hexToRgb(css("--accent-2") || "#c2410c");
+    const img = ctx.createImageData(RES, RES);
+    for (let j = 0; j < RES; j++) {
+      for (let i = 0; i < RES; i++) {
+        const d = dec ? dec[j * RES + i] : 0;
+        const w = Math.min(Math.abs(d), 1.5) / 1.5 * 0.32;
+        const c = d > 0 ? pos : neg;
+        const o = 4 * ((RES - 1 - j) * RES + i);
+        for (let k = 0; k < 3; k++) img.data[o + k] = Math.round(bg[k] * (1 - w) + c[k] * w);
+        img.data[o + 3] = 255;
+      }
+    }
+    const off = new OffscreenCanvas(RES, RES);
+    off.getContext("2d")!.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, W, H);
+    // decision boundary: marching squares on the grid
+    if (dec) {
+      ctx.strokeStyle = css("--ink");
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const sx = W / (RES - 1), sy = H / (RES - 1);
+      const at = (i: number, j: number) => dec[j * RES + i];
+      const lerp = (a: number, b: number) => a / (a - b);
+      for (let j = 0; j < RES - 1; j++) {
+        for (let i = 0; i < RES - 1; i++) {
+          const v = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+          const pts: [number, number][] = [];
+          const edges: [number, number, number, number, number, number][] = [
+            [0, 1, i, j, 1, 0], [1, 2, i + 1, j, 0, 1], [3, 2, i, j + 1, 1, 0], [0, 3, i, j, 0, 1],
+          ];
+          for (const [a, b, x0, y0, dx, dy] of edges) {
+            if ((v[a] > 0) !== (v[b] > 0)) {
+              const t = lerp(v[a], v[b]);
+              pts.push([(x0 + dx * t) * sx, H - (y0 + dy * t) * sy]);
+            }
+          }
+          if (pts.length >= 2) {
+            ctx.moveTo(...pts[0]);
+            ctx.lineTo(...pts[1]);
+            if (pts.length === 4) {
+              ctx.moveTo(...pts[2]);
+              ctx.lineTo(...pts[3]);
+            }
+          }
+        }
+      }
+      ctx.stroke();
+    }
+    points.forEach((p, k) => {
+      const x = p.x * W, y = (1 - p.y) * H;
+      ctx.fillStyle = p.c > 0 ? css("--accent") : css("--accent-2");
+      ctx.beginPath();
+      ctx.arc(x, y, 3.6, 0, 2 * Math.PI);
+      ctx.fill();
+      if (sv.has(k)) {
+        ctx.strokeStyle = css("--ink");
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(x, y, 7, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    });
+  }
+
+  function train() {
+    const n = points.length;
+    setStat("n", String(n));
+    const classes = new Set(points.map((p) => p.c));
+    if (!wasm || n < 2 || classes.size < 2) {
+      for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
+      render(null, new Set());
+      return;
+    }
+    const e = wasm;
+    const { lam, gamma, smoothing } = params();
+    const px = e.alloc(2 * n), py = e.alloc(n), m = RES * RES;
+    const pg = e.alloc(2 * m), pd = e.alloc(m), pt = e.alloc(n);
+    new Float64Array(e.memory.buffer, px, 2 * n).set(points.flatMap((p) => [p.x, p.y]));
+    new Float64Array(e.memory.buffer, py, n).set(points.map((p) => p.c));
+    const t0 = performance.now();
+    const steps = Number(e.train(px, n, 2, py, 0, lam, gamma, smoothing, 0, 1e-3));
+    const dt = performance.now() - t0;
+    const grid = new Float64Array(e.memory.buffer, pg, 2 * m);
+    for (let j = 0; j < RES; j++) {
+      for (let i = 0; i < RES; i++) {
+        grid[2 * (j * RES + i)] = i / (RES - 1);
+        grid[2 * (j * RES + i) + 1] = j / (RES - 1);
+      }
+    }
+    e.decision(pg, m, pd);
+    const dec = new Float64Array(new Float64Array(e.memory.buffer, pd, m));
+    e.decision(px, n, pt);
+    const train_dec = new Float64Array(e.memory.buffer, pt, n);
+    let correct = 0;
+    points.forEach((p, k) => (correct += train_dec[k] * p.c > 0 ? 1 : 0));
+    const nsv = Number(e.support(0));
+    const ps = e.alloc(Math.max(nsv, 1));
+    e.support(ps);
+    const sv = new Set(Array.from(new Float64Array(e.memory.buffer, ps, nsv), Number));
+    setStat("sv", `${nsv} (${Math.round((100 * nsv) / n)} %)`);
+    setStat("steps", steps.toLocaleString("en"));
+    setStat("time", `${dt.toFixed(1)} ms`);
+    setStat("acc", `${((100 * correct) / n).toFixed(1)} %`);
+    setStat("gap", fmt(Math.max(e.stat(1), 0)));
+    for (const [p, len] of [[px, 2 * n], [py, n], [pg, 2 * m], [pd, m], [pt, n], [ps, Math.max(nsv, 1)]]) {
+      e.dealloc(p, len);
+    }
+    render(dec, sv);
+  }
+
+  function schedule() {
+    const { lam, gamma, smoothing } = params();
+    root.querySelector("[data-out=lam]")!.textContent = fmt(lam);
+    root.querySelector("[data-out=gamma]")!.textContent = fmt(gamma);
+    root.querySelector("[data-out=smoothing]")!.textContent = smoothing.toFixed(2);
+    cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(train);
+  }
+
+  function activate(group: Element, button: Element) {
+    group.querySelectorAll(".chip").forEach((b) => b.classList.toggle("active", b === button));
+  }
+
+  root.querySelectorAll("[data-param]").forEach((el) => el.addEventListener("input", schedule));
+  root.querySelector("[data-presets]")!.addEventListener("click", (ev) => {
+    const b = (ev.target as HTMLElement).closest("[data-preset]");
+    if (!b) return;
+    activate(b.parentElement!, b);
+    preset(b.getAttribute("data-preset")!);
+    schedule();
+  });
+  root.querySelector("[data-classes]")!.addEventListener("click", (ev) => {
+    const b = (ev.target as HTMLElement).closest("[data-class]");
+    if (!b) return;
+    activate(b.parentElement!, b);
+    clickClass = Number(b.getAttribute("data-class"));
+  });
+  function addPoint(ev: MouseEvent, flip: boolean) {
+    const r = canvas.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width, y = 1 - (ev.clientY - r.top) / r.height;
+    points.push({ x, y, c: flip ? -clickClass : clickClass });
+    schedule();
+  }
+  canvas.addEventListener("click", (ev) => addPoint(ev, ev.shiftKey));
+  canvas.addEventListener("contextmenu", (ev) => {
+    ev.preventDefault();
+    addPoint(ev, true);
+  });
+  window.addEventListener("themechange", schedule);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", schedule);
+
+  preset("checkerboard");
+  schedule();
+  WebAssembly.instantiateStreaming(fetch(root.dataset.wasm!), {})
+    .catch(async () => WebAssembly.instantiate(await (await fetch(root.dataset.wasm!)).arrayBuffer(), {}))
+    .then(({ instance }) => {
+      wasm = instance.exports as unknown as Exports;
+      schedule();
+    });
+</script>
+
+<style>
+  .demo {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 1.6rem;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .demo {
+      grid-template-columns: 1fr;
+    }
+  }
+  canvas {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    cursor: crosshair;
+    display: block;
+    touch-action: manipulation;
+  }
+  .hint,
+  .note {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 0.6rem 0 0;
+  }
+  .row {
+    margin-bottom: 1rem;
+  }
+  .label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chip {
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    font: inherit;
+    font-size: 0.86rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .chip.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .dot.pos {
+    background: var(--accent);
+  }
+  .dot.neg {
+    background: var(--accent-2);
+  }
+  .slider {
+    display: block;
+    margin-bottom: 0.9rem;
+    font-size: 0.92rem;
+  }
+  .slider span {
+    display: flex;
+    justify-content: space-between;
+  }
+  .slider output {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--accent);
+  }
+  .slider input {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 1rem;
+    margin: 1.2rem 0 0;
+    padding: 1rem;
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .stats dt {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .stats dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.92rem;
+  }
+</style>

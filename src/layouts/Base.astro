@@ -1,0 +1,130 @@
+---
+import "katex/dist/katex.min.css";
+import "../styles/global.css";
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
+    <script is:inline>
+      try {
+        const t = localStorage.getItem("theme");
+        if (t) document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="#top">SVM · duality &amp; gradients</a>
+        <nav>
+          <a href="#ideas">Ideas</a>
+          <a href="#demo">Demo</a>
+          <a href="#hpo">Hyperparameters</a>
+          <a href="#results">Results</a>
+          <a href="#software">Software</a>
+          <a href="#thesis">Thesis</a>
+        </nav>
+        <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">◐</button>
+      </div>
+    </header>
+    <main id="top">
+      <slot />
+    </main>
+    <footer>
+      <div class="wrap">
+        <p>
+          © 2022–2026 Nico Strasdat · Code under BSD-3-Clause ·
+          <a href="https://github.com/wotzlaff/svm-site">Source of this page</a>
+        </p>
+      </div>
+    </footer>
+    <script is:inline>
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const root = document.documentElement;
+        const dark = root.dataset.theme
+          ? root.dataset.theme === "dark"
+          : matchMedia("(prefers-color-scheme: dark)").matches;
+        root.dataset.theme = dark ? "light" : "dark";
+        try {
+          localStorage.setItem("theme", root.dataset.theme);
+        } catch {}
+        window.dispatchEvent(new Event("themechange"));
+      });
+    </script>
+    <style>
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: color-mix(in srgb, var(--bg) 86%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        gap: 1.2rem;
+        height: 60px;
+      }
+      .brand {
+        font-family: var(--serif);
+        font-weight: 600;
+        color: var(--ink);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      nav {
+        display: flex;
+        gap: 1.1rem;
+        margin-left: auto;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      nav a {
+        color: var(--ink-2);
+        text-decoration: none;
+        font-size: 0.92rem;
+        white-space: nowrap;
+      }
+      nav a:hover {
+        color: var(--accent);
+      }
+      .theme-toggle {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+        border-radius: 999px;
+        width: 34px;
+        height: 34px;
+        cursor: pointer;
+        flex: none;
+      }
+      @media (max-width: 720px) {
+        .brand {
+          display: none;
+        }
+        nav {
+          margin-left: 0;
+        }
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 2rem 0 3rem;
+        font-size: 0.88rem;
+      }
+    </style>
+  </body>
+</html>

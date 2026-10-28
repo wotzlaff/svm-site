@@ -1,0 +1,19 @@
+{
+  "name": "svm-site",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "wasm": "cargo build --profile wasm -p svm-smo-wasm --target wasm32-unknown-unknown --manifest-path ../svm-smo/Cargo.toml && cp ../svm-smo/target/wasm32-unknown-unknown/wasm/svm_smo_wasm.wasm public/wasm/"
+  },
+  "dependencies": {
+    "astro": "^7.4.2",
+    "katex": "^0.16.11",
+    "@fontsource-variable/inter": "^5.2.0",
+    "@fontsource-variable/source-serif-4": "^5.2.0",
+    "@fontsource-variable/jetbrains-mono": "^5.2.0"
+  }
+}
