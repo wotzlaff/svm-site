@@ -37,14 +37,15 @@ const ogImage = new URL(`${base}/og.png`, Astro.site).href;
     <a class="skip-link" href="#top">Skip to content</a>
     <header class="nav">
       <div class="wrap nav-inner">
-        <a class="brand" href="#top">SVM · duality &amp; gradients</a>
+        <a class="brand" href={`${base}/`}>SVM · duality &amp; gradients</a>
         <nav aria-label="Sections">
-          <a href="#ideas">Ideas</a>
-          <a href="#demo">Demo</a>
-          <a href="#hpo">Hyperparameters</a>
-          <a href="#results">Results</a>
-          <a href="#software">Software</a>
-          <a href="#thesis">Thesis</a>
+          <a href={`${base}/#ideas`}>Ideas</a>
+          <a href={`${base}/#demo`}>Demo</a>
+          <a href={`${base}/#hpo`}>Hyperparameters</a>
+          <a href={`${base}/#results`}>Results</a>
+          <a href={`${base}/#software`}>Software</a>
+          <a href={`${base}/#thesis`}>Thesis</a>
+          <a href={`${base}/coverage/`}>Coverage</a>
         </nav>
         <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
       </div>

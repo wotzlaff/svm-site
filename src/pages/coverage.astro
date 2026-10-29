@@ -1,0 +1,123 @@
+---
+import Base from "../layouts/Base.astro";
+import { coverage, legacy, statusLabel } from "../data/coverage";
+
+const all = coverage.flatMap((g) => g.items);
+const count = (s: string) => all.filter((i) => i.status === s).length;
+const description =
+  "Which parts of the dissertation are implemented in smo-solver and optimized-svm, which are partial and which are still open.";
+---
+
+<Base title="Thesis coverage: what the software implements" description={description}>
+  <section>
+    <div class="wrap">
+      <p class="eyebrow">Coverage</p>
+      <h1>What the software covers</h1>
+      <p class="lead">
+        Chapter-by-chapter status of the thesis in <a href="https://github.com/wotzlaff/smo-solver">smo-solver</a>
+        and <a href="https://github.com/wotzlaff/optimized-svm">optimized-svm</a>. Of {all.length} items,
+        {count("done")} are implemented, {count("partial")} partly and {count("planned")} planned; the
+        remaining {count("theory")} are theory that the code builds on.
+      </p>
+      <p class="legend">
+        <span class="status done">Implemented</span>
+        <span class="status partial">Partly</span>
+        <span class="status planned">Planned</span>
+        <span class="status theory">Theory</span>
+      </p>
+
+      {coverage.map((g) => (
+        <>
+          <h2>{g.title}</h2>
+          <div class="card table-scroll">
+            <table class="cov">
+              <thead>
+                <tr><th>Sec.</th><th>Topic</th><th>Status</th><th>In the software</th></tr>
+              </thead>
+              <tbody>
+                {g.items.map((i) => (
+                  <tr>
+                    <td class="ref">{i.ref}</td>
+                    <td>{i.topic}</td>
+                    <td><span class={`status ${i.status}`}>{statusLabel[i.status]}</span></td>
+                    <td class="note">{i.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ))}
+
+      <h2>From the original code</h2>
+      <p>
+        The thesis was accompanied by two code bases. Both were reviewed and replaced; the defects found
+        are listed in <code>LEGACY_BUGS.md</code> of the workspace.
+      </p>
+      <div class="card table-scroll">
+        <table class="cov">
+          <thead><tr><th>Code</th><th>Purpose</th><th>Today</th></tr></thead>
+          <tbody>
+            {legacy.map((l) => (
+              <tr><td>{l.name}</td><td>{l.what}</td><td class="note">{l.now}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Beyond the thesis, the packages add further kernels (linear, polynomial, precomputed), Poisson
+        regression, scikit-learn estimators, a WebAssembly build and a reproduction script for Table 10.4.1.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  h2 {
+    margin-top: 2.6rem;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1.2rem 0 0;
+  }
+  table.cov th,
+  table.cov td {
+    text-align: left;
+    white-space: normal;
+    vertical-align: top;
+  }
+  table.cov td.ref {
+    white-space: nowrap;
+    color: var(--muted);
+  }
+  table.cov td.note {
+    color: var(--ink-2);
+    min-width: 22rem;
+  }
+  .status {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.12rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .status.done {
+    color: var(--ok);
+  }
+  .status.partial {
+    color: var(--accent-2);
+  }
+  .status.planned {
+    color: var(--accent);
+  }
+  .status.theory {
+    color: var(--muted);
+  }
+  .muted {
+    margin-top: 1.2rem;
+  }
+</style>
