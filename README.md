@@ -1,5 +1,7 @@
 # svm-site
 
+**Live: <https://wotzlaff.github.io/svm-site/>** — pages: [home](https://wotzlaff.github.io/svm-site/) · [Explore](https://wotzlaff.github.io/svm-site/explore/) · [Benchmarks](https://wotzlaff.github.io/svm-site/benchmarks/) · [Coverage of the thesis](https://wotzlaff.github.io/svm-site/coverage/)
+
 Project website for the dissertation *Duality, Derivative-Based Training Methods and
 Hyperparameter Optimization for Support Vector Machines* (Nico Strasdat) and the packages
 [`smo-solver`](https://github.com/wotzlaff/smo-solver) and
