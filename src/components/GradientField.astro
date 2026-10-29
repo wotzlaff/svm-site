@@ -1,0 +1,340 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="gfield card explainer" data-src={`${base}/data/hpo-path.json`}>
+  <div>
+    <canvas tabindex="0" role="application" aria-label="CV error landscape with gradient arrows; click to start a gradient descent" aria-describedby="gfield-hint"></canvas>
+    <p class="hint" id="gfield-hint">Click anywhere to start gradient descent from that point. With the keyboard: arrow keys move the cursor, Enter starts the descent.</p>
+  </div>
+  <div>
+    <div class="row">
+      <span class="label">Start from</span>
+      <div class="chips" data-starts role="group" aria-label="Preset starting points">
+        <button class="chip" data-start="-4,0.4" type="button">small λ, small γ</button>
+        <button class="chip" data-start="-0.4,2.8" type="button">large λ, large γ</button>
+        <button class="chip" data-start="-3.6,2.6" type="button">on a plateau</button>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top: 0">
+      <button class="btn small" data-arrows type="button" aria-pressed="true">Hide arrows</button>
+      <button class="btn small" data-clear type="button">Clear path</button>
+    </div>
+    <dl class="stats" aria-live="polite">
+      <div><dt>log₁₀ λ</dt><dd data-stat="x">–</dd></div>
+      <div><dt>log₁₀ γ</dt><dd data-stat="y">–</dd></div>
+      <div><dt>CV error</dt><dd data-stat="e">–</dd></div>
+      <div><dt>‖gradient‖</dt><dd data-stat="g">–</dd></div>
+      <div><dt>∂E / ∂log₁₀ λ</dt><dd data-stat="gx">–</dd></div>
+      <div><dt>∂E / ∂log₁₀ γ</dt><dd data-stat="gy">–</dd></div>
+    </dl>
+    <p class="readout" data-summary aria-live="polite">Hover over the map to read the exact gradient at a point.</p>
+    <p class="note">
+      Arrows show the negative gradient (steepest descent), longer where it is steeper. Error and gradient were
+      computed with <code>optimized-svm</code> at the 625 grid nodes — every gradient is exact, from one adjoint
+      system per fold — and are interpolated in between, so the descent is a replay on the precomputed surface.
+      Plain gradient descent zig-zags in the narrow valley; the library uses L-BFGS, which needs far fewer steps.
+    </p>
+  </div>
+</div>
+
+<script>
+  import { css, fmt, observeWidth, onTheme, setupCanvas } from "../lib/plot";
+  import { paintLandscape } from "../lib/landscape";
+
+  type Data = {
+    log10_lam: number[];
+    log10_gamma: number[];
+    cv_error: number[][];
+    grad_log10_lam: number[][];
+    grad_log10_gamma: number[][];
+  };
+  const root = document.querySelector<HTMLElement>(".gfield")!;
+  const canvas = root.querySelector("canvas")!;
+  let W = 560, H = 500;
+  let ctx = setupCanvas(canvas, W, H);
+  const M = { l: 46, r: 12, t: 12, b: 38 };
+  let data: Data;
+  let showArrows = true;
+  let path: [number, number][] = [];
+  let shown = 0; // number of path segments drawn so far
+  let timer = 0;
+  let hover: [number, number] | null = null;
+  const cursor: [number, number] = [-2, 1.5];
+  let keyboardActive = false;
+
+  const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
+  const summary = root.querySelector<HTMLElement>("[data-summary]")!;
+
+  // bilinear interpolation of a grid quantity (rows: gamma index, columns: lambda index)
+  function interp(F: number[][], x: number, y: number) {
+    const xs = data.log10_lam, ys = data.log10_gamma, n = xs.length, m = ys.length;
+    const fx = Math.min(Math.max(((x - xs[0]) / (xs[n - 1] - xs[0])) * (n - 1), 0), n - 1.0001);
+    const fy = Math.min(Math.max(((y - ys[0]) / (ys[m - 1] - ys[0])) * (m - 1), 0), m - 1.0001);
+    const i = Math.floor(fx), j = Math.floor(fy), a = fx - i, b = fy - j;
+    return F[j][i] * (1 - a) * (1 - b) + F[j][i + 1] * a * (1 - b) + F[j + 1][i] * (1 - a) * b + F[j + 1][i + 1] * a * b;
+  }
+  const E = (x: number, y: number) => interp(data.cv_error, x, y);
+  const G = (x: number, y: number): [number, number] => [interp(data.grad_log10_lam, x, y), interp(data.grad_log10_gamma, x, y)];
+
+  function readout(p: [number, number]) {
+    const [gx, gy] = G(...p);
+    stat("x", p[0].toFixed(2));
+    stat("y", p[1].toFixed(2));
+    stat("e", E(...p).toFixed(4));
+    stat("g", fmt(Math.hypot(gx, gy)));
+    stat("gx", fmt(gx));
+    stat("gy", fmt(gy));
+  }
+
+  function draw() {
+    const { px, py, x0, x1, y0, y1, dark, vmin, vmax } = paintLandscape(ctx, W, H, M, data.log10_lam, data.log10_gamma, data.cv_error);
+    const ink = css("--ink"), warm = css("--accent-2");
+    const kx = (W - M.l - M.r) / (x1 - x0), ky = (H - M.t - M.b) / (y1 - y0);
+    if (showArrows) {
+      const xs = data.log10_lam, ys = data.log10_gamma;
+      const step = W < 420 ? 3 : 2;
+      const vecs: { x: number; y: number; dx: number; dy: number; m: number }[] = [];
+      for (let j = 1; j < ys.length; j += step) {
+        for (let i = 1; i < xs.length; i += step) {
+          const gx = data.grad_log10_lam[j][i], gy = data.grad_log10_gamma[j][i];
+          // steepest descent as it appears on the screen (perpendicular to the contour lines)
+          const dx = -gx / kx, dy = gy / ky; // screen y points down
+          vecs.push({ x: px(xs[i]), y: py(ys[j]), dx, dy, m: Math.hypot(dx, dy) });
+        }
+      }
+      const mmax = Math.max(...vecs.map((v) => v.m));
+      const cell = ((W - M.l - M.r) / xs.length) * step;
+      // light arrows on the dark part of the map, dark ones on the light part
+      const light = "#f8fafc", deepInk = dark ? css("--surface") : ink;
+      ctx.lineWidth = 1.6;
+      for (const v of vecs) {
+        if (v.m === 0) continue;
+        const tt = (Math.log10(E(x0 + ((v.x - M.l) / (W - M.l - M.r)) * (x1 - x0), y0 + ((H - M.b - v.y) / (H - M.t - M.b)) * (y1 - y0))) - vmin) / (vmax - vmin);
+        const onDark = dark ? tt >= 0.5 : tt < 0.5;
+        ctx.strokeStyle = ctx.fillStyle = onDark ? light : deepInk;
+        const t = Math.sqrt(v.m / mmax);
+        const len = 5 + t * (cell * 0.85 - 5);
+        const ux = v.dx / v.m, uy = v.dy / v.m;
+        const x1a = v.x - (ux * len) / 2, y1a = v.y - (uy * len) / 2, x2 = v.x + (ux * len) / 2, y2 = v.y + (uy * len) / 2;
+        ctx.globalAlpha = 0.35 + 0.55 * t;
+        ctx.beginPath();
+        ctx.moveTo(x1a, y1a);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        const h = 3.4;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - ux * h - uy * h * 0.6, y2 - uy * h + ux * h * 0.6);
+        ctx.lineTo(x2 - ux * h + uy * h * 0.6, y2 - uy * h - ux * h * 0.6);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // descent path
+    if (path.length) {
+      const pts = path.slice(0, shown + 1);
+      ctx.strokeStyle = css("--surface");
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      pts.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](px(p[0]), py(p[1])));
+      ctx.stroke();
+      ctx.strokeStyle = warm;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      pts.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](px(p[0]), py(p[1])));
+      ctx.stroke();
+      pts.forEach((p, k) => {
+        ctx.fillStyle = k === pts.length - 1 ? warm : css("--surface");
+        ctx.strokeStyle = warm;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(px(p[0]), py(p[1]), k === pts.length - 1 ? 6 : 3, 0, 7);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+    const mark = hover ?? (keyboardActive ? cursor : null);
+    if (mark && !timer) {
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(px(mark[0]), py(mark[1]), 9, 0, 7);
+      ctx.moveTo(px(mark[0]) - 14, py(mark[1]));
+      ctx.lineTo(px(mark[0]) + 14, py(mark[1]));
+      ctx.moveTo(px(mark[0]), py(mark[1]) - 14);
+      ctx.lineTo(px(mark[0]), py(mark[1]) + 14);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // normalised gradient steps with a cap (step length min(cap, eta |g|) decades) on the exact gradient
+  // field; stops when the interpolated error has not improved for a while
+  function descend(start: [number, number]) {
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const clamp = (p: number[]): [number, number] => [
+      Math.min(Math.max(p[0], xs[0]), xs[xs.length - 1]),
+      Math.min(Math.max(p[1], ys[0]), ys[ys.length - 1]),
+    ];
+    const pts: [number, number][] = [clamp(start)];
+    const es = [E(...pts[0])];
+    const ETA = 6, CAP = 0.15, WINDOW = 8;
+    for (let it = 0; it < 90; it++) {
+      const p = pts[pts.length - 1];
+      const [gx, gy] = G(...p);
+      const gn = Math.hypot(gx, gy);
+      if (gn < 3e-3) break;
+      const len = Math.min(CAP, ETA * gn);
+      const q = clamp([p[0] - (len * gx) / gn, p[1] - (len * gy) / gn]);
+      pts.push(q);
+      es.push(E(...q));
+      if (es.length > WINDOW + 1 && Math.min(...es.slice(-WINDOW)) > Math.min(...es.slice(0, -WINDOW)) - 3e-4) break;
+    }
+    return pts;
+  }
+
+  function start(p: [number, number]) {
+    clearInterval(timer);
+    path = descend(p);
+    shown = 0;
+    summary.textContent = "";
+    readout(path[0]);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      shown = path.length - 1;
+      finish();
+      draw();
+      return;
+    }
+    timer = window.setInterval(() => {
+      shown++;
+      readout(path[shown]);
+      draw();
+      if (shown >= path.length - 1) {
+        clearInterval(timer);
+        timer = 0;
+        finish();
+        draw();
+      }
+    }, 90);
+    draw();
+  }
+
+  function finish() {
+    const last = path[path.length - 1];
+    readout(last);
+    const best = Math.min(...data.cv_error.flat());
+    const stalled = E(...last) - best > 0.05;
+    summary.textContent =
+      `Gradient descent: ${path.length - 1} steps to log₁₀ λ = ${last[0].toFixed(2)}, log₁₀ γ = ${last[1].toFixed(2)}, CV error ${E(...last).toFixed(4)}` +
+      (stalled ? " — stalled on a plateau where the gradient almost vanishes. Gradient methods need a sensible start (or restarts)." : ".");
+  }
+
+  function toData(ev: MouseEvent): [number, number] {
+    const r = canvas.getBoundingClientRect();
+    const sx = W / r.width, sy = H / r.height;
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const fx = (((ev.clientX - r.left) * sx - M.l) / (W - M.l - M.r));
+    const fy = 1 - (((ev.clientY - r.top) * sy - M.t) / (H - M.t - M.b));
+    return [
+      xs[0] + Math.min(1, Math.max(0, fx)) * (xs[xs.length - 1] - xs[0]),
+      ys[0] + Math.min(1, Math.max(0, fy)) * (ys[ys.length - 1] - ys[0]),
+    ];
+  }
+
+  canvas.addEventListener("click", (ev) => {
+    keyboardActive = false;
+    start(toData(ev));
+  });
+  canvas.addEventListener("pointermove", (ev) => {
+    if (timer) return;
+    keyboardActive = false;
+    hover = toData(ev);
+    readout(hover);
+    draw();
+  });
+  canvas.addEventListener("pointerleave", () => {
+    hover = null;
+    if (!timer) draw();
+  });
+  canvas.addEventListener("keydown", (ev) => {
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const dx = (xs[xs.length - 1] - xs[0]) * (ev.shiftKey ? 0.1 : 0.02), dy = (ys[ys.length - 1] - ys[0]) * (ev.shiftKey ? 0.1 : 0.02);
+    const move: Record<string, [number, number]> = { ArrowLeft: [-dx, 0], ArrowRight: [dx, 0], ArrowUp: [0, dy], ArrowDown: [0, -dy] };
+    if (ev.key in move) {
+      cursor[0] = Math.min(xs[xs.length - 1], Math.max(xs[0], cursor[0] + move[ev.key][0]));
+      cursor[1] = Math.min(ys[ys.length - 1], Math.max(ys[0], cursor[1] + move[ev.key][1]));
+      readout(cursor);
+    } else if (ev.key === "Enter" || ev.key === " ") {
+      start([...cursor]);
+    } else {
+      return;
+    }
+    ev.preventDefault();
+    keyboardActive = true;
+    draw();
+  });
+  canvas.addEventListener("focus", () => {
+    keyboardActive = true;
+    if (data) draw();
+  });
+  canvas.addEventListener("blur", () => {
+    keyboardActive = false;
+    if (data) draw();
+  });
+  root.querySelector("[data-starts]")!.addEventListener("click", (ev) => {
+    const b = (ev.target as HTMLElement).closest("[data-start]");
+    if (!b) return;
+    const [x, y] = b.getAttribute("data-start")!.split(",").map(Number);
+    start([x, y]);
+  });
+  const arrowsBtn = root.querySelector<HTMLButtonElement>("[data-arrows]")!;
+  arrowsBtn.addEventListener("click", () => {
+    showArrows = !showArrows;
+    arrowsBtn.setAttribute("aria-pressed", String(showArrows));
+    arrowsBtn.textContent = showArrows ? "Hide arrows" : "Show arrows";
+    draw();
+  });
+  root.querySelector("[data-clear]")!.addEventListener("click", () => {
+    clearInterval(timer);
+    timer = 0;
+    path = [];
+    summary.textContent = "Hover over the map to read the exact gradient at a point.";
+    draw();
+  });
+  onTheme(() => data && draw());
+  observeWidth(canvas, (w) => {
+    W = Math.max(300, w);
+    H = Math.round(Math.min(520, Math.max(320, W * 0.9)));
+    canvas.style.aspectRatio = `${W} / ${H}`;
+    ctx = setupCanvas(canvas, W, H);
+    if (data) draw();
+  });
+  fetch(root.dataset.src!)
+    .then((r) => r.json())
+    .then((d: Data) => {
+      data = d;
+      draw();
+    });
+</script>
+
+<style>
+  canvas {
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  canvas:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .readout {
+    margin: 1rem 0 0;
+    padding: 0.8rem 1rem;
+    border-radius: 10px;
+    background: var(--surface-2);
+    font-size: 0.92rem;
+    color: var(--ink);
+    min-height: 2.6em;
+  }
+</style>

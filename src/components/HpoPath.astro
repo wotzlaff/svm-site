@@ -28,6 +28,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <script>
   import { contour, css, mix, observeWidth, onTheme, rgb, setupCanvas } from "../lib/plot";
+  import { paintLandscape } from "../lib/landscape";
 
   type Data = {
     grid: number;
@@ -58,88 +59,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
 
-  function layout() {
-    const xs = data.log10_lam, ys = data.log10_gamma;
-    const x0 = xs[0], x1 = xs[xs.length - 1], y0 = ys[0], y1 = ys[ys.length - 1];
-    const px = (x: number) => M.l + ((x - x0) / (x1 - x0)) * (LW - M.l - M.r);
-    const py = (y: number) => LH - M.b - ((y - y0) / (y1 - y0)) * (LH - M.t - M.b);
-    return { x0, x1, y0, y1, px, py };
-  }
-
   function drawLandscape() {
-    const { x0, x1, y0, y1, px, py } = layout();
-    const n = data.cv_error.length; // landscape grid (the decision functions use data.grid)
     const xs = data.log10_lam, ys = data.log10_gamma;
-    const V = data.cv_error.map((row) => row.map((e) => Math.log10(e)));
-    const flat = V.flat();
-    const vmin = Math.min(...flat), vmax = Math.max(...flat);
-    const ink = css("--ink"), surface = rgb(css("--surface")), accent = rgb(css("--accent"));
-    // the best region gets the most conspicuous colour: dark navy on light, bright blue on dark backgrounds
-    const dark = 0.299 * surface[0] + 0.587 * surface[1] + 0.114 * surface[2] < 128;
-    const deep = dark ? mix(accent, [255, 255, 255], 0.3) : mix(accent, rgb(ink), 0.55);
-    lctx.fillStyle = css("--surface");
-    lctx.fillRect(0, 0, LW, LH);
-    // heat map: bilinear interpolation of the grid
-    const w = Math.round(LW - M.l - M.r), h = Math.round(LH - M.t - M.b);
-    const img = lctx.createImageData(w, h);
-    const at = (fx: number, fy: number) => {
-      const gx = Math.min(Math.max(fx, 0), n - 1.0001), gy = Math.min(Math.max(fy, 0), n - 1.0001);
-      const i = Math.floor(gx), j = Math.floor(gy), a = gx - i, b = gy - j;
-      return V[j][i] * (1 - a) * (1 - b) + V[j][i + 1] * a * (1 - b) + V[j + 1][i] * (1 - a) * b + V[j + 1][i + 1] * a * b;
-    };
-    // the canvas context is scaled by 2: draw at logical resolution through an offscreen canvas
-    for (let yy = 0; yy < h; yy++) {
-      for (let xx = 0; xx < w; xx++) {
-        const v = at((xx / (w - 1)) * (n - 1), ((h - 1 - yy) / (h - 1)) * (n - 1));
-        const t = Math.pow((v - vmin) / (vmax - vmin), 0.8);
-        const c = t < 0.5 ? mix(deep, accent, t * 2) : mix(accent, surface, (t - 0.5) * 2 * 0.92);
-        const o = 4 * (yy * w + xx);
-        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
-      }
-    }
-    const off = new OffscreenCanvas(w, h);
-    off.getContext("2d")!.putImageData(img, 0, 0);
-    lctx.imageSmoothingEnabled = true;
-    lctx.drawImage(off, M.l, M.t, LW - M.l - M.r, LH - M.t - M.b);
-    // contour lines
-    lctx.strokeStyle = dark ? css("--surface") : ink;
-    lctx.globalAlpha = dark ? 0.4 : 0.28;
-    lctx.lineWidth = 0.8;
-    for (let k = 1; k < 12; k++) {
-      const level = vmin + ((vmax - vmin) * k) / 12;
-      lctx.beginPath();
-      for (const [a, b, c, d] of contour((i, j) => V[j][i], n, n, level)) {
-        lctx.moveTo(px(x0 + (a / (n - 1)) * (x1 - x0)), py(y0 + (b / (n - 1)) * (y1 - y0)));
-        lctx.lineTo(px(x0 + (c / (n - 1)) * (x1 - x0)), py(y0 + (d / (n - 1)) * (y1 - y0)));
-      }
-      lctx.stroke();
-    }
-    lctx.globalAlpha = 1;
-    // frame and axes
-    lctx.strokeStyle = css("--muted");
-    lctx.lineWidth = 1;
-    lctx.strokeRect(M.l, M.t, LW - M.l - M.r, LH - M.t - M.b);
-    lctx.fillStyle = css("--muted");
-    lctx.font = "11px " + css("--mono");
-    lctx.textAlign = "center";
-    for (let t = Math.ceil(x0); t <= x1; t++) {
-      lctx.fillText(String(t), px(t), LH - M.b + 15);
-      lctx.beginPath(); lctx.moveTo(px(t), LH - M.b); lctx.lineTo(px(t), LH - M.b + 4); lctx.stroke();
-    }
-    lctx.textAlign = "right";
-    for (let t = Math.ceil(y0); t <= y1; t++) {
-      lctx.fillText(String(t), M.l - 7, py(t) + 4);
-      lctx.beginPath(); lctx.moveTo(M.l - 4, py(t)); lctx.lineTo(M.l, py(t)); lctx.stroke();
-    }
-    lctx.fillStyle = css("--ink-2");
-    lctx.font = "12px " + css("--sans");
-    lctx.textAlign = "center";
-    lctx.fillText("log₁₀ λ  (regularization)", M.l + (LW - M.l - M.r) / 2, LH - 6);
-    lctx.save();
-    lctx.translate(13, M.t + (LH - M.t - M.b) / 2);
-    lctx.rotate(-Math.PI / 2);
-    lctx.fillText("log₁₀ γ  (kernel width)", 0, 0);
-    lctx.restore();
+    const ink = css("--ink");
+    const { px, py } = paintLandscape(lctx, LW, LH, M, xs, ys, data.cv_error);
     // grid points
     if (showGrid) {
       lctx.fillStyle = css("--ink");

@@ -34,17 +34,23 @@ def checkerboard(n: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 
 
 def grid_row(lg, lams, x, labels, folds):
-    """CV errors for one value of log10 gamma (warm-started from large to small lambda)."""
+    """CV error and exact gradient for one value of log10 gamma (warm start: large to small lambda).
+
+    Returns three lists: error, d error / d log10(lambda) and d error / d log10(gamma). The
+    hyperparameters of the optimizer are theta = (ln lambda, ln s) with gamma = s^2.
+    """
     loss, validation = HingeLoss(smoothing=0.5), SmoothHingeValidation()
     warm = [None] * len(folds)
-    row = []
+    err, g_lam, g_gam = [], [], []
     for ll in lams[::-1]:
         theta = np.array([ll * np.log(10), 0.5 * lg * np.log(10)])
         res = cv_error_and_gradient(
             theta, x, labels, np.ones(len(labels)), folds, loss, validation, warm_start=warm
         )
-        row.append(res.error)
-    return row[::-1]
+        err.append(res.error)
+        g_lam.append(res.gradient[0] * np.log(10))
+        g_gam.append(res.gradient[1] * 0.5 * np.log(10))
+    return err[::-1], g_lam[::-1], g_gam[::-1]
 
 
 def r(a, digits: int = 4):
@@ -58,7 +64,8 @@ def hpo_path() -> None:
     lams = np.linspace(-4.5, 0, 25)
     gammas = np.linspace(0, 3, 25)
     with ProcessPoolExecutor() as pool:
-        err = np.array(list(pool.map(partial(grid_row, lams=lams, x=x, labels=labels, folds=folds), gammas)))
+        rows = list(pool.map(partial(grid_row, lams=lams, x=x, labels=labels, folds=folds), gammas))
+    err, g_lam, g_gam = (np.array([row[k] for row in rows]) for k in range(3))
     model = OptimizedSVC(lam_init=1e-1, scaling_init=1.5, cv=folds).fit(x, y)
     gx, gy = np.meshgrid(np.linspace(0, 1, GRID), np.linspace(0, 1, GRID))
     pts = np.c_[gx.ravel(), gy.ravel()]
@@ -81,6 +88,8 @@ def hpo_path() -> None:
         "log10_lam": r(lams, 3),
         "log10_gamma": r(gammas, 3),
         "cv_error": r(err, 5),
+        "grad_log10_lam": r(g_lam, 5),
+        "grad_log10_gamma": r(g_gam, 5),
         "grid_best": {
             "log10_lam": float(lams[best % len(lams)]),
             "log10_gamma": float(gammas[best // len(lams)]),

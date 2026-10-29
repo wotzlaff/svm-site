@@ -1,0 +1,246 @@
+---
+import Base from "../layouts/Base.astro";
+import BenchCharts from "../components/BenchCharts.astro";
+import bench from "../../public/data/bench.json";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const description =
+  "Measured: the SMO solver against LIBSVM, gradient-based hyperparameter optimization against grid, random and successive-halving search, speed-ups between releases and the best switching point from SMO to Newton's method.";
+
+const methods = ["gradient method", "gradient method, ARD", "grid search (13 x 11)", "random search (30)", "successive halving"];
+const names = Object.keys(bench.search);
+const cell = (d: any, m: string) => d.methods[m];
+const score = (d: any, v: any) => (d.task === "cls" ? `${(100 * v.error).toFixed(1)} %` : v.error.toFixed(3));
+const bestFor = (d: any) => {
+  const present = methods.filter((m) => d.methods[m]);
+  return present.reduce((a, b) => (d.methods[a].error <= d.methods[b].error ? a : b));
+};
+const clsMean = (name: string) => bench.search[name as keyof typeof bench.search].methods;
+const grid = (n: string) => clsMean(n)["grid search (13 x 11)"];
+const grad = (n: string) => clsMean(n)["gradient method"];
+const speedups = bench.versions["1t"].cases.map((c: any) => c.old_s / c.new_s);
+const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n === 5000)!;
+---
+
+<Base title="Benchmarks: what the numbers say" description={description}>
+  <section class="intro">
+    <div class="wrap">
+      <p class="eyebrow">Benchmarks</p>
+      <h1>What the numbers say</h1>
+      <p class="lead">
+        Four measurements behind the claims of this site: how fast the solver is, how many evaluations the
+        gradient method saves, how much faster the packages became since the first release, and when to hand
+        over from SMO to Newton's method.
+      </p>
+      <p class="muted">
+        All numbers come from the scripts in the repositories and were measured on a shared 12-core Linux
+        machine (single process unless stated). Treat the absolute times as indicative; the ratios are what
+        matters. The data sets are synthetic or small public ones, so the results say nothing about every
+        problem.
+      </p>
+    </div>
+  </section>
+
+  <section id="solver">
+    <div class="wrap">
+      <p class="eyebrow">Solver</p>
+      <h2>On par with LIBSVM</h2>
+      <p class="lead">
+        <code>smo-solver</code> solves the same problems as LIBSVM (scikit-learn's <code>SVC</code> and
+        <code>SVR</code>, same tolerance) and agrees with it to about 10⁻³ in the decision values. The numbers
+        below each pair of bars are the time ratio smo-solver / LIBSVM.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="libsvm" viewBox="0 0 560 330" role="img" aria-label="Training times of smo-solver and LIBSVM"></svg>
+        <figcaption>
+          10 features, RBF kernel, γ = 0.1, C = 100 (narrow screens: C = classification, R = regression). Classification needs the same number of steps as LIBSVM;
+          for ε-regression with n = 5000 the solver runs {libsvmReg.ours_steps.toLocaleString("en")} steps against{" "}
+          {libsvmReg.libsvm_steps.toLocaleString("en")} and is {((libsvmReg.ours_s / libsvmReg.libsvm_s - 1) * 100).toFixed(0)} % slower. The extra
+          steps are not wasted: at equal duality gap the two working-set rules need the same number of steps, the
+          default rule just stops later.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="search">
+    <div class="wrap">
+      <p class="eyebrow">Hyperparameter search</p>
+      <h2>Fewer evaluations, same accuracy</h2>
+      <p class="lead">
+        The gradient method (<code>OptimizedSVC</code>/<code>OptimizedSVR</code>) is compared with grid search
+        (13 × 11), random search (30 draws) and successive halving on scikit-learn's LIBSVM models. Every point
+        is the mean of {bench.search[names[0]].methods["grid search (13 x 11)"].runs} random splits; down and left is better.
+      </p>
+      <div class="grid grid-2 scatters">
+        {names.map((n) => (
+          <figure class="card">
+            <svg class="plot bench" data-chart="search" data-dataset={n} viewBox="0 0 400 260" role="img" aria-label={`Search time and test error on ${n}`}></svg>
+          </figure>
+        ))}
+      </div>
+      <div class="card table-scroll">
+        <table class="search">
+          <thead>
+            <tr>
+              <th>data set</th>
+              {methods.map((m) => <th>{m}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {names.map((n) => {
+              const d = bench.search[n as keyof typeof bench.search] as any;
+              const b = bestFor(d);
+              return (
+                <tr>
+                  <td>{n}</td>
+                  {methods.map((m) => d.methods[m] ? (
+                    <td class={m === b ? "best" : ""}>
+                      <span class="main">{score(d, d.methods[m])}</span>
+                      <span class="sub">{d.methods[m].seconds.toFixed(1)} s · {Math.round(d.methods[m].evaluations)} ev.</span>
+                    </td>
+                  ) : <td class="na">–</td>)}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Test error rate (classification) or mean squared error of standardized targets (regression), search time
+        in seconds and number of evaluated hyperparameter settings; best accuracy per row in bold. A setting means
+        one 5-fold cross-validation. On the two-dimensional checkerboard problem the gradient method needs{" "}
+        {grad(names[0]).seconds.toFixed(1)} s against {grid(names[0]).seconds.toFixed(1)} s for the grid. The gradient
+        method pays off most where the grid is expensive; with many hyperparameters (ARD: one kernel width per
+        feature) a grid is out of the question, and the exact gradient costs the same as for two. ARD is no
+        free lunch: with ten hyperparameters it halves the error on Friedman #1 and helps on the noisy classification
+        problem, but on the small diabetes data (265 training points) it overfits the cross-validation error and
+        is worse than the plain method. Random search wins there.
+      </p>
+    </div>
+  </section>
+
+  <section id="versions">
+    <div class="wrap">
+      <p class="eyebrow">Releases</p>
+      <h2>Faster since the first release</h2>
+      <p class="lead">
+        The time of a complete optimization, <code>optimized-svm</code> {bench.versions["1t"].old_version} with{" "}
+        <code>smo-solver</code> {bench.versions["1t"].old_solver} against {bench.versions["1t"].new_version} with{" "}
+        <code>smo-solver</code> {bench.versions["1t"].new_solver}, with the same code and data, one BLAS thread. The optimized
+        cross-validation errors are the same.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="versions" data-blas="1t" viewBox="0 0 560 340" role="img" aria-label="Time of a full optimization for two releases"></svg>
+        <figcaption>
+          Abbreviations on narrow screens: cls = classification, SVR = ε-SVR, ARD = one scaling per feature, ν = ε-SVR with
+          ν-bound; the number is n. What changed: kernel columns reused between validation and adjoint system, block gradients without
+          distance matrices, the Cholesky factor of the last Newton step reused, a bug that made warm starts
+          counterproductive for classification fixed, AVX2 loops in the solver, and a new switching rule from SMO to
+          Newton (next section) — which is the main reason for the ν-bound case, where SMO converges very slowly.
+        </figcaption>
+      </figure>
+      <figure class="card">
+        <svg class="plot bench" data-chart="versions" data-blas="dt" viewBox="0 0 560 340" role="img" aria-label="Time of a full optimization for two releases, default BLAS threads"></svg>
+        <figcaption>
+          The same with the default number of BLAS threads. Matrix factorizations of the size that occurs here ran
+          several times slower with many threads on a busy machine; the new release limits them to one thread.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="switch">
+    <div class="wrap">
+      <p class="eyebrow">SMO and Newton</p>
+      <h2>When to hand over</h2>
+      <p class="lead">
+        Training runs SMO to a rough tolerance and then refines with Newton's method. Too early and Newton starts
+        from a poor point; too late and SMO wastes steps. The heat maps show the total time relative to the best
+        tolerance of each row (1.0 = best, outlined) for 1000 samples.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="switch" data-task="svc" data-scenario="cold" viewBox="0 0 400 240" role="img" aria-label="Relative time over SMO tolerance and lambda, classification"></svg>
+          <figcaption>Classification</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="switch" data-task="svr" data-scenario="cold" viewBox="0 0 400 240" role="img" aria-label="Relative time over SMO tolerance and lambda, regression"></svg>
+          <figcaption>ε-regression</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Without SMO (right column) Newton starts at zero and needs many steps. Small λ prefers an earlier
+        hand-over. Over 40 problems (size, λ, kernel width, loss, smoothing, active ν-bound) a tolerance of 0.3 was
+        best on average, and a budget of five SMO steps per sample removes the worst cases. See{" "}
+        <a href="https://wotzlaff.github.io/optimized-svm/theory/switching/">the study</a> and
+        <code>benchmarks/smo_newton_switch.py</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="reproduce">
+    <div class="wrap">
+      <p class="eyebrow">Reproduce</p>
+      <h2>Run it yourself</h2>
+      <pre><code># smo-solver
+python benchmarks/bench_vs_libsvm.py --sizes 1000 2000 5000
+
+# optimized-svm
+python benchmarks/hpo_vs_search.py --seeds 3 &gt; hpo_vs_search.json
+python benchmarks/hpo_timing.py &gt; timing.json          # once per release, once per BLAS setting
+python benchmarks/smo_newton_switch.py --out switch.csv
+
+# this site (raw files in data/benchmarks/)
+python scripts/make_benchmark_data.py</code></pre>
+    </div>
+  </section>
+
+  <BenchCharts />
+</Base>
+
+<style>
+  .intro {
+    padding: 3rem 0 1rem;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+  }
+  .muted {
+    color: var(--muted);
+    font-size: 0.92rem;
+    max-width: 78ch;
+  }
+  .wrap > figure.card + figure.card {
+    margin-top: 1.25rem;
+  }
+  .scatters {
+    margin-bottom: 1.25rem;
+  }
+  svg.plot {
+    width: 100%;
+    display: block;
+  }
+  table.search td,
+  table.search th {
+    white-space: normal;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.search td.best .main {
+    font-weight: 700;
+    color: var(--ink);
+  }
+  table.search .main {
+    display: block;
+    font-variant-numeric: tabular-nums;
+  }
+  table.search .sub {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  table.search .na {
+    color: var(--muted);
+  }
+</style>

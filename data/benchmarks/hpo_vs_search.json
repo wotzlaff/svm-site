@@ -1,0 +1,515 @@
+[
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "grid search (13 x 11)",
+  "seconds": 7.875366197898984,
+  "evaluations": 143,
+  "score": 0.85
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "random search (30)",
+  "seconds": 2.008250743150711,
+  "evaluations": 30,
+  "score": 0.840625
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "successive halving",
+  "seconds": 0.5457526631653309,
+  "evaluations": 35,
+  "score": 0.85625
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "gradient method",
+  "seconds": 0.42284129559993744,
+  "evaluations": 14,
+  "score": 0.853125
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "grid search (13 x 11)",
+  "seconds": 19.66826799698174,
+  "evaluations": 143,
+  "score": 0.8666666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "random search (30)",
+  "seconds": 4.010991269722581,
+  "evaluations": 30,
+  "score": 0.8666666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "successive halving",
+  "seconds": 1.018365267664194,
+  "evaluations": 67,
+  "score": 0.8516666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "gradient method",
+  "seconds": 2.845195921137929,
+  "evaluations": 18,
+  "score": 0.8766666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 0,
+  "method": "gradient method, ARD",
+  "seconds": 10.372678497806191,
+  "evaluations": 43,
+  "score": 0.89
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "grid search (13 x 11)",
+  "seconds": 83.15748739615083,
+  "evaluations": 143,
+  "score": 0.08090678643473473
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "random search (30)",
+  "seconds": 29.438601253554225,
+  "evaluations": 30,
+  "score": 0.0896860406572922
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "successive halving",
+  "seconds": 0.8983264453709126,
+  "evaluations": 90,
+  "score": 0.20938580735762433
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "gradient method",
+  "seconds": 7.061474749818444,
+  "evaluations": 20,
+  "score": 0.07853819378167434
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "gradient method, ARD",
+  "seconds": 28.484434619545937,
+  "evaluations": 64,
+  "score": 0.04090206553626835
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "grid search (13 x 11)",
+  "seconds": 11.720112387090921,
+  "evaluations": 143,
+  "score": 0.5161447804840238
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "random search (30)",
+  "seconds": 2.6727583296597004,
+  "evaluations": 30,
+  "score": 0.5051090660171319
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "successive halving",
+  "seconds": 0.3582553882151842,
+  "evaluations": 38,
+  "score": 0.5051090660171319
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "gradient method",
+  "seconds": 0.5530473217368126,
+  "evaluations": 20,
+  "score": 0.5241330756330304
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 0,
+  "method": "gradient method, ARD",
+  "seconds": 1.9023807011544704,
+  "evaluations": 65,
+  "score": 0.5524281258204878
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "grid search (13 x 11)",
+  "seconds": 7.8828444723039865,
+  "evaluations": 143,
+  "score": 0.8875
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "random search (30)",
+  "seconds": 1.7889832071959972,
+  "evaluations": 30,
+  "score": 0.884375
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "successive halving",
+  "seconds": 0.49809443578124046,
+  "evaluations": 35,
+  "score": 0.884375
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "gradient method",
+  "seconds": 0.7743926923722029,
+  "evaluations": 28,
+  "score": 0.89375
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "grid search (13 x 11)",
+  "seconds": 23.605232065543532,
+  "evaluations": 143,
+  "score": 0.8833333333333333
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "random search (30)",
+  "seconds": 3.8618804793804884,
+  "evaluations": 30,
+  "score": 0.88
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "successive halving",
+  "seconds": 0.9648151565343142,
+  "evaluations": 67,
+  "score": 0.8616666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "gradient method",
+  "seconds": 3.2174424957484007,
+  "evaluations": 20,
+  "score": 0.8816666666666667
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 1,
+  "method": "gradient method, ARD",
+  "seconds": 8.811733148992062,
+  "evaluations": 46,
+  "score": 0.9
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "grid search (13 x 11)",
+  "seconds": 82.51439285837114,
+  "evaluations": 143,
+  "score": 0.08605371637662051
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "random search (30)",
+  "seconds": 4.259892605245113,
+  "evaluations": 30,
+  "score": 0.11522953069626694
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "successive halving",
+  "seconds": 0.8636209852993488,
+  "evaluations": 90,
+  "score": 0.293284867048396
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "gradient method",
+  "seconds": 4.283092439174652,
+  "evaluations": 14,
+  "score": 0.08476871280453306
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "gradient method, ARD",
+  "seconds": 18.184286082163453,
+  "evaluations": 53,
+  "score": 0.05115814292556079
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "grid search (13 x 11)",
+  "seconds": 11.850632628425956,
+  "evaluations": 143,
+  "score": 0.45379771891869813
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "random search (30)",
+  "seconds": 1.0851040091365576,
+  "evaluations": 30,
+  "score": 0.4559410076276905
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "successive halving",
+  "seconds": 0.35483913123607635,
+  "evaluations": 38,
+  "score": 0.6026322458546153
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "gradient method",
+  "seconds": 0.7225269582122564,
+  "evaluations": 28,
+  "score": 0.44512236308349135
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 1,
+  "method": "gradient method, ARD",
+  "seconds": 1.6811092514544725,
+  "evaluations": 63,
+  "score": 0.5423065569937926
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "grid search (13 x 11)",
+  "seconds": 8.034797014668584,
+  "evaluations": 143,
+  "score": 0.91875
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "random search (30)",
+  "seconds": 0.9660624787211418,
+  "evaluations": 30,
+  "score": 0.875
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "successive halving",
+  "seconds": 0.46756261214613914,
+  "evaluations": 35,
+  "score": 0.490625
+ },
+ {
+  "dataset": "checkerboard (n=800, 2 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "gradient method",
+  "seconds": 0.3093916606158018,
+  "evaluations": 12,
+  "score": 0.909375
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "grid search (13 x 11)",
+  "seconds": 19.629913778975606,
+  "evaluations": 143,
+  "score": 0.885
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "random search (30)",
+  "seconds": 4.510750148445368,
+  "evaluations": 30,
+  "score": 0.8883333333333333
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "successive halving",
+  "seconds": 0.8956058025360107,
+  "evaluations": 67,
+  "score": 0.8883333333333333
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "gradient method",
+  "seconds": 2.6381775457412004,
+  "evaluations": 18,
+  "score": 0.8983333333333333
+ },
+ {
+  "dataset": "noisy classification (n=1500, 10 features)",
+  "task": "cls",
+  "seed": 2,
+  "method": "gradient method, ARD",
+  "seconds": 8.96038599871099,
+  "evaluations": 55,
+  "score": 0.9
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "grid search (13 x 11)",
+  "seconds": 80.15453870035708,
+  "evaluations": 143,
+  "score": 0.08484120848284361
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "random search (30)",
+  "seconds": 8.619413815438747,
+  "evaluations": 30,
+  "score": 0.08699562990957581
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "successive halving",
+  "seconds": 1.4213296845555305,
+  "evaluations": 90,
+  "score": 0.10885786740120768
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "gradient method",
+  "seconds": 2.592118628323078,
+  "evaluations": 10,
+  "score": 0.08025919718250016
+ },
+ {
+  "dataset": "Friedman #1 (n=1000, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "gradient method, ARD",
+  "seconds": 15.043468348681927,
+  "evaluations": 47,
+  "score": 0.04172252580533323
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "grid search (13 x 11)",
+  "seconds": 11.62563218548894,
+  "evaluations": 143,
+  "score": 0.53644568815126
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "random search (30)",
+  "seconds": 2.5287380255758762,
+  "evaluations": 30,
+  "score": 0.5068137826796236
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "successive halving",
+  "seconds": 0.3599104806780815,
+  "evaluations": 38,
+  "score": 0.5258563046340867
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "gradient method",
+  "seconds": 0.6141131594777107,
+  "evaluations": 21,
+  "score": 0.5396906894865349
+ },
+ {
+  "dataset": "diabetes (n=442, 10 features)",
+  "task": "reg",
+  "seed": 2,
+  "method": "gradient method, ARD",
+  "seconds": 2.431122535839677,
+  "evaluations": 77,
+  "score": 0.6229489565718653
+ }
+]

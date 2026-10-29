@@ -39,7 +39,7 @@ const description =
         <dl class="facts">
           <div><dt>{hpoPath.iterates.length} instead of {hpoPath.cv_error.length ** 2}</dt><dd>CV evaluations: gradient method vs. grid</dd></div>
           <div><dt>exact</dt><dd>hypergradients, checked against finite differences</dd></div>
-          <div><dt>≈ LIBSVM</dt><dd>speed of the Rust SMO solver</dd></div>
+          <div><dt><a href={`${base}/benchmarks/#solver`}>≈ LIBSVM</a></dt><dd>speed of the Rust SMO solver</dd></div>
         </dl>
       </div>
       <figure class="hero-fig card">
@@ -132,7 +132,9 @@ const description =
         <a class="card more" href={`${base}/explore/#regression`}><strong>ε-tube</strong><span>Regression with sparse solutions</span></a>
         <a class="card more" href={`${base}/explore/#loss`}><strong>Smoothing</strong><span>Why smoothed losses are differentiable</span></a>
         <a class="card more" href={`${base}/explore/#hpo`}><strong>Optimization path</strong><span>Gradient method versus grid search</span></a>
+        <a class="card more" href={`${base}/explore/#field`}><strong>Objective &amp; gradient</strong><span>The CV error with exact gradients</span></a>
         <a class="card more" href={`${base}/explore/#ard`}><strong>Feature relevance</strong><span>One kernel width per feature</span></a>
+        <a class="card more" href={`${base}/benchmarks/`}><strong>Benchmarks</strong><span>Measured against LIBSVM, grid and random search</span></a>
       </div>
     </div>
   </section>
@@ -343,6 +345,10 @@ OptimizedSVC(blocks="features").fit(X, y)</code></pre>
     margin: 2rem 0 0;
     padding-top: 1.4rem;
     border-top: 1px solid var(--line);
+  }
+  .facts dt a {
+    color: inherit;
+    text-decoration-color: var(--line);
   }
   .facts dt {
     font-family: var(--serif);

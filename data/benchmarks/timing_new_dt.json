@@ -1,0 +1,36 @@
+{
+ "optimized_svm": "0.2.1",
+ "smo_solver": "0.1.2",
+ "cases": [
+  {
+   "case": "classification, n = 600",
+   "seconds": 0.8751009609550238,
+   "cv_error": 0.32545345912168905
+  },
+  {
+   "case": "classification, n = 1500",
+   "seconds": 5.293473424389958,
+   "cv_error": 0.33313572739006037
+  },
+  {
+   "case": "\u03b5-SVR, n = 450",
+   "seconds": 1.5036491360515356,
+   "cv_error": 0.1966791497664708
+  },
+  {
+   "case": "\u03b5-SVR, n = 1200",
+   "seconds": 22.119119802489877,
+   "cv_error": 0.1451963091032407
+  },
+  {
+   "case": "\u03b5-SVR, one scaling per feature, n = 450",
+   "seconds": 2.445587506517768,
+   "cv_error": 0.1158443202965067
+  },
+  {
+   "case": "\u03b5-SVR with \u03bd-bound, n = 300",
+   "seconds": 1.0628076773136854,
+   "cv_error": 0.27637592706834313
+  }
+ ]
+}

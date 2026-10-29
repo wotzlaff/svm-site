@@ -1,0 +1,109 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div hidden data-bench-src={`${base}/data/bench.json`}></div>
+
+<script>
+  import { groupedBars, heatmap, scatter, type ScatterPoint } from "../lib/charts";
+  import { observeWidth, onTheme } from "../lib/plot";
+
+  const src = document.querySelector<HTMLElement>("[data-bench-src]")!.dataset.benchSrc!;
+  const svgs = [...document.querySelectorAll<SVGSVGElement>("svg[data-chart]")];
+  let data: any;
+  const widths = new Map<SVGSVGElement, number>();
+
+  const ratio = (a: number, b: number) => `${(a / b).toFixed(2)}×`;
+  const short: Record<string, number> = {
+    "gradient method": 0,
+    "gradient method, ARD": 0,
+    "grid search (13 x 11)": 1,
+    "random search (30)": 2,
+    "successive halving": 3,
+  };
+  const label: Record<string, string> = {
+    "gradient method": "gradient",
+    "gradient method, ARD": "gradient + ARD",
+    "grid search (13 x 11)": "grid",
+    "random search (30)": "random",
+    "successive halving": "halving",
+  };
+
+  function render(svg: SVGSVGElement) {
+    const W = Math.max(300, widths.get(svg) ?? Math.round(svg.getBoundingClientRect().width));
+    const kind = svg.dataset.chart!;
+    if (kind === "libsvm") {
+      const rows = [...(data.libsvm as any[])].sort((a, b) => a.task.localeCompare(b.task) || a.n - b.n);
+      groupedBars(svg, W, {
+        categories: rows.map((r) => `${r.task === "classification" ? "classif." : "regress."}|n = ${r.n}`),
+        compact: rows.map((r) => `${r.task === "classification" ? "C" : "R"} ${r.n / 1000}k`),
+        series: [
+          { name: "smo-solver", values: rows.map((r) => r.ours_s) },
+          { name: "LIBSVM (scikit-learn)", values: rows.map((r) => r.libsvm_s) },
+        ],
+        yLabel: "training time [s]",
+        log: true,
+        format: (v) => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3)),
+        note: (i) => ratio(rows[i].ours_s, rows[i].libsvm_s),
+      });
+    } else if (kind === "search") {
+      const name = svg.dataset.dataset!;
+      const d = data.search[name];
+      const pts: ScatterPoint[] = Object.entries<any>(d.methods).map(([m, v]) => ({
+        x: v.seconds, y: v.error, series: short[m], label: label[m],
+      }));
+      scatter(svg, W, {
+        title: name,
+        xLabel: "search time [s] (log)",
+        yLabel: d.task === "cls" ? "test error rate" : "test MSE",
+        points: pts,
+        yFormat: (v) => (d.task === "cls" ? v.toFixed(3) : v.toFixed(2)),
+      });
+    } else if (kind === "versions") {
+      const v = data.versions[svg.dataset.blas!];
+      groupedBars(svg, W, {
+        categories: v.cases.map((c: any) => c.case.split(", ").join("|")),
+        compact: ["cls|600", "cls|1.5k", "SVR|450", "SVR|1.2k", "ARD|450", "ν|300"],
+        series: [
+          { name: `optimized-svm ${v.old_version}`, values: v.cases.map((c: any) => c.old_s) },
+          { name: `optimized-svm ${v.new_version}`, values: v.cases.map((c: any) => c.new_s) },
+        ],
+        yLabel: "time of a full optimization [s]",
+        log: true,
+        note: (i) => `${(v.cases[i].old_s / v.cases[i].new_s).toFixed(1)}× faster`,
+      });
+    } else if (kind === "switch") {
+      const t = data.switch.tasks[svg.dataset.task!][svg.dataset.scenario!];
+      heatmap(svg, W, {
+        rows: t.rows,
+        cols: data.switch.cols,
+        values: t.values,
+        rowLabel: "",
+        colLabel: "SMO tolerance before the Newton refinement",
+      });
+    }
+  }
+
+  fetch(src)
+    .then((r) => r.json())
+    .then((d) => {
+      data = d;
+      for (const svg of svgs) observeWidth(svg, (w) => { widths.set(svg, w); render(svg); });
+      onTheme(() => svgs.forEach(render));
+    });
+</script>
+
+<style is:global>
+  svg.bench .grid { stroke: var(--line); stroke-width: 1; }
+  svg.bench .tick { fill: var(--muted); font-size: 10.5px; font-family: var(--mono); }
+  svg.bench .lbl { fill: var(--ink-2); font-size: 11.5px; font-family: var(--sans); }
+  svg.bench .ttl { fill: var(--ink); font-size: 13px; font-weight: 600; font-family: var(--sans); }
+  svg.bench .val { fill: var(--ink-2); font-size: 10px; font-family: var(--mono); }
+  svg.bench .note { fill: var(--ink); font-size: 11px; font-weight: 600; font-family: var(--sans); }
+  svg.bench .fill.s0 { fill: var(--accent); }
+  svg.bench .fill.s1 { fill: var(--accent-2); }
+  svg.bench .fill.s2 { fill: var(--ok); }
+  svg.bench .fill.s3 { fill: var(--muted); }
+  svg.bench .cellt { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
+  svg.bench .cellt.inv { fill: var(--surface); }
+  svg.bench .best { fill: none; stroke: var(--ink); stroke-width: 2; }
+</style>

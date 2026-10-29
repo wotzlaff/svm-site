@@ -5,6 +5,7 @@ import LossExplorer from "../components/LossExplorer.astro";
 import HpoPath from "../components/HpoPath.astro";
 import GradientSlice from "../components/GradientSlice.astro";
 import ArdBars from "../components/ArdBars.astro";
+import GradientField from "../components/GradientField.astro";
 
 const description =
   "Interactive explainers for support vector machines: regression with the ε-tube, smoothed loss functions, gradient-based hyperparameter optimization, exact hypergradients and automatic relevance determination.";
@@ -59,6 +60,19 @@ const description =
         hundreds. Press replay and watch the model improve along the path.
       </p>
       <HpoPath />
+    </div>
+  </section>
+
+  <section id="field">
+    <div class="wrap">
+      <p class="eyebrow">Objective function</p>
+      <h2>The cross-validation error and its gradient</h2>
+      <p class="lead">
+        The hyperparameter objective is the cross-validation error as a function of λ and γ. Every point of
+        this map carries an exact gradient, computed without finite differences. Follow the arrows downhill,
+        or click to start a gradient descent yourself.
+      </p>
+      <GradientField />
     </div>
   </section>
 
