@@ -80,7 +80,7 @@ export const coverage: Group[] = [
     items: [
       { ref: "10.1", topic: "Checkerboard dataset", status: "done", note: "Used in the demo and the CV-error landscape on this site." },
       { ref: "10.2", topic: "SMO study (working sets, optimality measures, shrinking)", status: "partial",
-        note: "Figures from the thesis are shown above; the study has not been repeated with the new solver." },
+        note: "Repeated with the new solver for shrinking (speed-up over size and tolerance, the parameters η and c, a minimal removed fraction) and for the stopping measure (violation vs. bound-aware vs. duality gap against the actual error); see Benchmarks. Working set rules and the thesis figures on convergence are not repeated." },
       { ref: "10.3", topic: "Primal methods, Newton vs. SMO", status: "partial",
         note: "Done for the switching point: a measurement study over problem size, λ, kernel width, loss and solver options (benchmarks/smo_newton_switch.py in optimized-svm) gave the default rule of tolerance 0.3 plus a step budget. First-order primal methods are not implemented." },
       { ref: "10.4.1", topic: "HPO on the artificial dataset", status: "done", note: "Landscape and optimization path on the home page." },

@@ -46,6 +46,7 @@ export type BarsSpec = {
   log?: boolean;
   format?: (v: number) => string;
   note?: (c: number) => string; // text above a category (e.g. speed-up)
+  hline?: number; // reference line (e.g. 1 for speed-ups)
 };
 
 /** Grouped vertical bars with optional logarithmic axis. */
@@ -79,6 +80,9 @@ export function groupedBars(svg: SVGSVGElement, W: number, spec: BarsSpec) {
     svg.append(el("text", { x: M.l - 6, y: py(v) + 3, class: "tick", "text-anchor": "end" }, fmt(v)));
   }
   svg.append(el("text", { x: 12, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 12 ${M.t + (H - M.t - M.b) / 2})` }, spec.yLabel));
+  if (spec.hline !== undefined && spec.hline >= lo && spec.hline <= hi) {
+    svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(spec.hline), y2: py(spec.hline), class: "hline" }));
+  }
   const gw = (W - M.l - M.r) / cats.length;
   const bw = Math.min(34, (gw * 0.78) / spec.series.length);
   cats.forEach((c, i) => {
@@ -159,6 +163,7 @@ export type HeatSpec = {
   values: number[][]; // relative time, >= 1
   rowLabel: string;
   colLabel: string;
+  globalBest?: boolean; // outline only the fastest cell of the whole map
 };
 
 /** Heat map of relative times (1 = best of the row); the best cell of each row is outlined. */
@@ -183,7 +188,9 @@ export function heatmap(svg: SVGSVGElement, W: number, spec: HeatSpec) {
   };
   spec.rows.forEach((r, i) => {
     svg.append(el("text", { x: M.l - 8, y: M.t + i * ch + ch / 2 + 4, class: "tick", "text-anchor": "end" }, r));
-    const best = spec.values[i].indexOf(Math.min(...spec.values[i]));
+    const rowBest = spec.values[i].indexOf(Math.min(...spec.values[i]));
+    const flat = spec.values.flat();
+    const gmin = Math.min(...flat);
     spec.cols.forEach((c, j) => {
       const v = spec.values[i][j];
       svg.append(el("rect", { x: M.l + j * cw, y: M.t + i * ch, width: cw - 1, height: ch - 1, fill: color(v), class: "cell" }));
@@ -191,7 +198,7 @@ export function heatmap(svg: SVGSVGElement, W: number, spec: HeatSpec) {
         const dark = Math.log10(v) / Math.log10(4) > 0.55;
         svg.append(el("text", { x: M.l + j * cw + cw / 2, y: M.t + i * ch + ch / 2 + 4, class: dark ? "cellt inv" : "cellt", "text-anchor": "middle" }, v < 10 ? v.toFixed(1) : v.toFixed(0)));
       }
-      if (j === best) svg.append(el("rect", { x: M.l + j * cw + 1, y: M.t + i * ch + 1, width: cw - 3, height: ch - 3, class: "best" }));
+      if (spec.globalBest ? v === gmin : j === rowBest) svg.append(el("rect", { x: M.l + j * cw + 1, y: M.t + i * ch + 1, width: cw - 3, height: ch - 3, class: "best" }));
     });
   });
   spec.cols.forEach((c, j) => svg.append(el("text", { x: M.l + j * cw + cw / 2, y: M.t + spec.rows.length * ch + 15, class: "tick", "text-anchor": "middle" }, c)));
@@ -201,4 +208,38 @@ export function heatmap(svg: SVGSVGElement, W: number, spec: HeatSpec) {
 
 function css(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+export type XY = { x: number; y: number; series: number };
+
+/** Log-log scatter plot with the diagonal y = x; x and y must be positive. */
+export function loglog(
+  svg: SVGSVGElement,
+  W: number,
+  spec: { title: string; xLabel: string; yLabel: string; points: XY[]; legend: string[] },
+) {
+  const M = { l: 58, r: 14, t: 46, b: 42 };
+  const H = Math.round(Math.max(250, Math.min(330, W * 0.82)));
+  reset(svg, W, H);
+  svg.append(el("text", { x: M.l, y: 15, class: "ttl" }, spec.title));
+  legend(svg, spec.legend, M.l, 32, W - M.l - M.r);
+  const lx = spec.points.map((p) => Math.log10(p.x)), ly = spec.points.map((p) => Math.log10(p.y));
+  const lo = Math.floor(Math.min(...lx, ...ly) - 0.05), hi = Math.ceil(Math.max(...lx, ...ly) + 0.05);
+  const px = (v: number) => M.l + ((v - lo) / (hi - lo)) * (W - M.l - M.r);
+  const py = (v: number) => H - M.b - ((v - lo) / (hi - lo)) * (H - M.t - M.b);
+  const stride = Math.max(1, Math.ceil((hi - lo) / Math.max(4, Math.floor((W - M.l - M.r) / 44))));
+  for (let t = lo; t <= hi; t++) {
+    svg.append(el("line", { x1: px(t), x2: px(t), y1: M.t, y2: H - M.b, class: "grid" }));
+    svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(t), y2: py(t), class: "grid" }));
+    if ((t - lo) % stride === 0) {
+      svg.append(el("text", { x: px(t), y: H - M.b + 14, class: "tick", "text-anchor": "middle" }, `1e${t}`));
+      svg.append(el("text", { x: M.l - 6, y: py(t) + 3, class: "tick", "text-anchor": "end" }, `1e${t}`));
+    }
+  }
+  svg.append(el("line", { x1: px(lo), y1: py(lo), x2: px(hi), y2: py(hi), class: "hline" }));
+  svg.append(el("text", { x: M.l + (W - M.l - M.r) / 2, y: H - 5, class: "lbl", "text-anchor": "middle" }, spec.xLabel));
+  svg.append(el("text", { x: 12, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 12 ${M.t + (H - M.t - M.b) / 2})` }, spec.yLabel));
+  spec.points.forEach((p, i) => {
+    svg.append(el("circle", { cx: px(lx[i]), cy: py(ly[i]), r: 2.8, class: `fill ${SERIES[p.series % 4]}`, opacity: 0.65 }));
+  });
 }

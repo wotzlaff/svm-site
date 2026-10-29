@@ -28,9 +28,9 @@ const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n =
       <p class="eyebrow">Benchmarks</p>
       <h1>What the numbers say</h1>
       <p class="lead">
-        Four measurements behind the claims of this site: how fast the solver is, how many evaluations the
-        gradient method saves, how much faster the packages became since the first release, and when to hand
-        over from SMO to Newton's method.
+        Measurements behind the claims of this site: how fast the solver is, how many evaluations the
+        gradient method saves, how much faster the packages became since the first release, when to hand
+        over from SMO to Newton's method, and what shrinking and the stopping criterion do inside the solver.
       </p>
       <p class="muted">
         All numbers come from the scripts in the repositories and were measured on a shared 12-core Linux
@@ -60,6 +60,87 @@ const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n =
           default rule just stops later.
         </figcaption>
       </figure>
+    </div>
+  </section>
+
+  <section id="shrinking">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>Shrinking</h2>
+      <p class="lead">
+        Shrinking removes variables that sit at a bound from the active set, so every step touches fewer
+        entries; before the solver stops, the full problem is restored and checked again, so the result does not
+        depend on the heuristic (Sec. 7.10 of the thesis). The thesis leaves its parameters open; this study sets them.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="shrink-scaling" data-task="classification" viewBox="0 0 400 280" role="img" aria-label="Speed-up by shrinking for classification"></svg>
+          <figcaption>Classification</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="shrink-scaling" data-task="regression" viewBox="0 0 400 280" role="img" aria-label="Speed-up by shrinking for regression"></svg>
+          <figcaption>ε-regression (n counts samples; 2n variables)</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Time without divided by time with shrinking, current defaults. The gain grows with the problem size and
+        with the requested accuracy (tolerance 10⁻⁵ at n = 10 000: {bench.shrinking.scaling.classification.speedup[2][3].toFixed(1)}×), as in the
+        thesis (Fig. 10.2.11). The results are identical; the solver restored the full problem once (twice for a few
+        regression runs) before terminating.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="shrink-params" data-setting="classification" viewBox="0 0 400 220" role="img" aria-label="Relative time over the shrinking parameters, classification"></svg>
+          <figcaption>Classification, n = 5000, tolerance 10⁻⁵</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="shrink-params" data-setting="regression" viewBox="0 0 400 220" role="img" aria-label="Relative time over the shrinking parameters, regression"></svg>
+          <figcaption>ε-regression, n = 2000, tolerance 10⁻³</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Relative time over the exponent η and the factor c of the threshold c · r<sup>η</sup> (1.0 = fastest cell;
+        r is the violation measure). Neither value is critical as long as c is not far below 1: with c = 0.1 variables
+        are removed too early and have to return (twice the steps), with a large c shrinking comes too late.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="shrink-defaults" viewBox="0 0 560 300" role="img" aria-label="Speed-up of three shrinking defaults"></svg>
+        <figcaption>
+          Over {bench.shrinking.defaults.settings} settings (classification n = 5000, ε-regression n = 2000, three kernel widths, two λ,
+          two tolerances). The exponent η = 1 (threshold = the violation itself, as in LIBSVM) is faster than the
+          thesis' η &lt; 1, mainly for regression. The remaining slow cases had a narrow kernel: nearly every sample is a
+          support vector, nothing can be shrunk, and the restoration of the full problem cost up to 60 % extra.
+          Skipping attempts that remove at most 10 % of the active set fixes that.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="stopping">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>What the tolerance means</h2>
+      <p class="lead">
+        The solver stops when the violation <i>r</i> (the largest gradient difference of a violating pair, scaled like in
+        LIBSVM) drops below the tolerance. Is that a good measure? Every point is one iterate of one of 12 runs; the
+        vertical axis is the largest deviation of the decision function from the exactly solved problem.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="stop" data-measure="violation" data-title="Violation r (stopping measure)" data-xlabel="violation r" viewBox="0 0 400 300" role="img" aria-label="Decision error against the violation measure"></svg>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="stop" data-measure="gap" data-title="Duality gap" data-xlabel="duality gap" viewBox="0 0 400 300" role="img" aria-label="Decision error against the duality gap"></svg>
+        </figure>
+      </div>
+      <p class="muted">
+        The dashed line is y = x. The violation tracks the error of the predictions almost one-to-one — a tolerance of
+        10⁻³ means decision values accurate to about 10⁻³ — and the bound-aware measure of the thesis (Def. 7.21)
+        gives the same picture: the two agree to about 10 %. The duality gap grows with the number of samples and is
+        a much looser guide (the spread is 2.7 decades against 0.6): a gap threshold that guarantees an accuracy of
+        10⁻³ is 2·10⁻⁵. The dual objective converges quadratically and says even less about the predictions.
+        Raw data and the script: <code>benchmarks/stopping_study.py</code> in <code>smo-solver</code>.
+      </p>
     </div>
   </section>
 

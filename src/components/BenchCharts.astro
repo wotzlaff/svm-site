@@ -4,7 +4,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <div hidden data-bench-src={`${base}/data/bench.json`}></div>
 
 <script>
-  import { groupedBars, heatmap, scatter, type ScatterPoint } from "../lib/charts";
+  import { groupedBars, heatmap, loglog, scatter, type ScatterPoint } from "../lib/charts";
   import { observeWidth, onTheme } from "../lib/plot";
 
   const src = document.querySelector<HTMLElement>("[data-bench-src]")!.dataset.benchSrc!;
@@ -71,6 +71,37 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         log: true,
         note: (i) => `${(v.cases[i].old_s / v.cases[i].new_s).toFixed(1)}× faster`,
       });
+    } else if (kind === "shrink-scaling") {
+      const d = data.shrinking.scaling[svg.dataset.task!];
+      groupedBars(svg, W, {
+        categories: d.n.map((n: number) => `n = ${n}`),
+        series: d.tols.map((t: string, i: number) => ({ name: `tolerance ${t}`, values: d.speedup[i] })),
+        yLabel: "time without / with shrinking",
+        hline: 1,
+        format: (v) => v.toFixed(2),
+      });
+    } else if (kind === "shrink-params") {
+      const t = data.shrinking.params[svg.dataset.setting!];
+      heatmap(svg, W, { rows: t.rows, cols: t.cols, values: t.values, rowLabel: "", colLabel: "factor c in the threshold c · r^η", globalBest: true });
+    } else if (kind === "shrink-defaults") {
+      const d = data.shrinking.defaults;
+      groupedBars(svg, W, {
+        categories: ["geometric mean|(24 settings)", "worst case"],
+        series: d.variants.map((v: any) => ({ name: v.name, values: [v.gmean, v.worst] })),
+        yLabel: "speed-up vs. no shrinking",
+        hline: 1,
+        format: (v) => v.toFixed(2),
+      });
+    } else if (kind === "stop") {
+      const m = svg.dataset.measure!;
+      const pts = data.stopping.points.filter((p: any) => p[m] > 0).map((p: any) => ({ x: p[m], y: p.f_err, series: p.task === "classification" ? 0 : 1 }));
+      loglog(svg, W, {
+        title: svg.dataset.title!,
+        xLabel: svg.dataset.xlabel!,
+        yLabel: "max error of the decision function",
+        points: pts,
+        legend: ["classification", "ε-regression"],
+      });
     } else if (kind === "switch") {
       const t = data.switch.tasks[svg.dataset.task!][svg.dataset.scenario!];
       heatmap(svg, W, {
@@ -106,4 +137,5 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   svg.bench .cellt { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
   svg.bench .cellt.inv { fill: var(--surface); }
   svg.bench .best { fill: none; stroke: var(--ink); stroke-width: 2; }
+  svg.bench .hline { stroke: var(--ink-2); stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; }
 </style>
