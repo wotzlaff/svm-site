@@ -81,7 +81,7 @@ export const coverage: Group[] = [
       { ref: "10.2", topic: "SMO study (working sets, optimality measures, shrinking)", status: "partial",
         note: "Figures from the thesis are shown above; the study has not been repeated with the new solver." },
       { ref: "10.3", topic: "Primal methods, Newton vs. SMO", status: "partial",
-        note: "Only the switching tolerance was studied (no effect between 0.1 and 2.0, 0.01 is 2.5× slower)." },
+        note: "Done for the switching point: a measurement study over problem size, λ, kernel width, loss and solver options (benchmarks/smo_newton_switch.py in optimized-svm) gave the default rule of tolerance 0.3 plus a step budget. First-order primal methods are not implemented." },
       { ref: "10.4.1", topic: "HPO on the artificial dataset", status: "done", note: "Landscape and optimization path on the home page." },
       { ref: "10.4.2", topic: "HPO on real regression data (Table 10.4.1)", status: "partial",
         note: "Reproduced with benchmarks/thesis_regression.py: five of seven data sets agree; mpg and housing are 13–15 % worse in MSE (cause unknown, not the optimizer)." },
