@@ -1,0 +1,151 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="gslice card explainer" data-src={`${base}/data/gradient-slice.json`}>
+  <div>
+    <svg class="plot" viewBox="0 0 560 380" role="img" aria-labelledby="gslice-title gslice-desc">
+      <title id="gslice-title">Cross-validation error as a function of the regularization, with the exact gradient as tangent</title>
+      <desc id="gslice-desc">The 5-fold cross-validation error of a smoothed SVM over log λ at a fixed kernel width. A marker moves along the curve; its tangent has the slope of the exact hypergradient.</desc>
+    </svg>
+    <p class="hint">Slice of the CV error through the optimum (kernel width fixed). The tangent at the marker is drawn from the hypergradient, which is computed with one adjoint linear system per fold — no finite differences.</p>
+  </div>
+  <div>
+    <label class="slider">
+      <span>Regularization log₁₀ λ <output data-out="x"></output></span>
+      <input type="range" min="0" max="90" step="1" value="30" data-param="i" />
+    </label>
+    <dl class="stats" aria-live="polite">
+      <div><dt>CV error</dt><dd data-stat="err">–</dd></div>
+      <div><dt>exact hypergradient</dt><dd data-stat="grad">–</dd></div>
+      <div><dt>finite difference (neighbours)</dt><dd data-stat="fd">–</dd></div>
+      <div><dt>direction of descent</dt><dd data-stat="dir">–</dd></div>
+    </dl>
+    <p class="note">
+      The gradient is taken with respect to log₁₀ λ. A finite difference needs two more trainings for
+      every hyperparameter; the adjoint gradient costs one extra linear system per fold for all of them
+      together, which is what makes one kernel width per feature affordable.
+    </p>
+  </div>
+</div>
+
+<script>
+  import { fmt, onTheme } from "../lib/plot";
+
+  type Data = { scaling: number; log10_lam: number[]; cv_error: number[]; d_log10_lam: number[] };
+  const root = document.querySelector<HTMLElement>(".gslice")!;
+  const svg = root.querySelector("svg")!;
+  const slider = root.querySelector<HTMLInputElement>("[data-param=i]")!;
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 560, H = 380, M = { l: 54, r: 14, t: 16, b: 44 };
+  let data: Data;
+
+  function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, text?: string) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
+
+  function draw() {
+    const x = data.log10_lam, y = data.cv_error, g = data.d_log10_lam;
+    const i = Number(slider.value);
+    const x0 = x[0], x1 = x[x.length - 1];
+    const ymin = Math.min(...y), ymax = Math.max(...y);
+    const pad = (ymax - ymin) * 0.08;
+    const lo = ymin - pad, hi = ymax + pad;
+    const px = (t: number) => M.l + ((t - x0) / (x1 - x0)) * (W - M.l - M.r);
+    const py = (v: number) => H - M.b - ((v - lo) / (hi - lo)) * (H - M.t - M.b);
+    svg.replaceChildren(svg.querySelector("title")!, svg.querySelector("desc")!);
+    // axes and grid
+    for (let t = Math.ceil(x0); t <= x1; t++) {
+      svg.append(el("line", { x1: px(t), x2: px(t), y1: M.t, y2: H - M.b, class: "grid" }));
+      svg.append(el("text", { x: px(t), y: H - M.b + 16, class: "tick", "text-anchor": "middle" }, String(t)));
+    }
+    const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / 4)));
+    const ystep = [1, 2, 5, 10].map((m) => m * step).find((s) => (hi - lo) / s <= 5) ?? step;
+    for (let v = Math.ceil(lo / ystep) * ystep; v < hi; v += ystep) {
+      svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(v), y2: py(v), class: "grid" }));
+      svg.append(el("text", { x: M.l - 6, y: py(v) + 3, class: "tick", "text-anchor": "end" }, v.toFixed(2)));
+    }
+    svg.append(el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, class: "frame" }));
+    svg.append(el("text", { x: M.l + (W - M.l - M.r) / 2, y: H - 6, class: "lbl", "text-anchor": "middle" }, "log₁₀ λ  (regularization)"));
+    const yl = el("text", { x: 14, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 14 ${M.t + (H - M.t - M.b) / 2})` }, "CV error");
+    svg.append(yl);
+    // curve
+    svg.append(el("path", { d: x.map((t, k) => `${k ? "L" : "M"}${px(t).toFixed(1)} ${py(y[k]).toFixed(1)}`).join(""), class: "curve" }));
+    // minimum
+    const imin = y.indexOf(ymin);
+    svg.append(el("circle", { cx: px(x[imin]), cy: py(ymin), r: 4.5, class: "min" }));
+    svg.append(el("text", { x: px(x[imin]), y: py(ymin) + 17, class: "tick", "text-anchor": "middle" }, "minimum"));
+    // tangent: slope g[i] per decade in data units -> screen units
+    const half = 0.6; // decades on each side
+    const ta = x[i] - half, tb = x[i] + half;
+    svg.append(el("line", {
+      x1: px(ta), y1: py(y[i] - g[i] * half), x2: px(tb), y2: py(y[i] + g[i] * half), class: "tangent",
+    }));
+    svg.append(el("circle", { cx: px(x[i]), cy: py(y[i]), r: 6, class: "marker" }));
+    // readouts
+    root.querySelector("[data-out=x]")!.textContent = x[i].toFixed(2);
+    stat("err", y[i].toFixed(4));
+    stat("grad", fmt(g[i]));
+    const a = Math.max(i - 1, 0), b = Math.min(i + 1, x.length - 1);
+    const fd = (y[b] - y[a]) / (x[b] - x[a]);
+    stat("fd", fmt(fd));
+    stat("dir", Math.abs(g[i]) < 2e-4 ? "stationary" : g[i] > 0 ? "decrease λ ←" : "increase λ →");
+  }
+
+  slider.addEventListener("input", draw);
+  onTheme(() => data && draw());
+  fetch(root.dataset.src!)
+    .then((r) => r.json())
+    .then((d: Data) => {
+      data = d;
+      slider.max = String(d.log10_lam.length - 1);
+      slider.value = String(Math.round(d.log10_lam.length * 0.28));
+      draw();
+    });
+</script>
+
+<style is:global>
+  .gslice svg .grid {
+    stroke: var(--line);
+    stroke-width: 1;
+  }
+  .gslice svg .frame {
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1;
+  }
+  .gslice svg .curve {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2.4;
+    stroke-linejoin: round;
+  }
+  .gslice svg .tangent {
+    stroke: var(--accent-2);
+    stroke-width: 2.4;
+    stroke-linecap: round;
+  }
+  .gslice svg .marker {
+    fill: var(--accent-2);
+    stroke: var(--surface);
+    stroke-width: 2;
+  }
+  .gslice svg .min {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.6;
+  }
+  .gslice svg .tick {
+    fill: var(--muted);
+    font-size: 10.5px;
+    font-family: var(--mono);
+  }
+  .gslice svg .lbl {
+    fill: var(--ink-2);
+    font-size: 12px;
+    font-family: var(--sans);
+  }
+</style>

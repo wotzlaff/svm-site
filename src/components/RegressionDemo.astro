@@ -1,0 +1,338 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="rdemo card explainer" data-wasm={`${base}/wasm/smo_solver_wasm.wasm`}>
+  <div>
+    <canvas tabindex="0" role="application" aria-label="Regression data, fitted curve and ε-tube" aria-describedby="rdemo-hint"></canvas>
+    <p class="hint" id="rdemo-hint">Click to add a point, shift-click to remove the nearest one. With the keyboard: arrow keys move the cursor, Enter adds a point, Backspace removes the last one.</p>
+  </div>
+  <div>
+    <div class="row">
+      <span class="label">Data</span>
+      <div class="chips" data-presets role="group" aria-label="Data set">
+        <button class="chip active" data-preset="sine" aria-pressed="true">Sine</button>
+        <button class="chip" data-preset="line" aria-pressed="false">Noisy line</button>
+        <button class="chip" data-preset="outliers" aria-pressed="false">Outliers</button>
+        <button class="chip" data-preset="gap" aria-pressed="false">Gap</button>
+        <button class="chip" data-preset="clear" aria-pressed="false">Empty</button>
+      </div>
+    </div>
+    <label class="slider">
+      <span>Tube width ε <output data-out="eps"></output></span>
+      <input type="range" min="0" max="0.25" step="0.005" value="0.08" data-param="eps" />
+    </label>
+    <label class="slider">
+      <span>Regularization λ <output data-out="lam"></output></span>
+      <input type="range" min="-5" max="0" step="0.1" value="-3" data-param="lam" />
+    </label>
+    <label class="slider">
+      <span>Kernel width γ <output data-out="gamma"></output></span>
+      <input type="range" min="-1" max="3" step="0.05" value="1.5" data-param="gamma" />
+    </label>
+    <label class="slider">
+      <span>Loss smoothing δ <output data-out="smoothing"></output></span>
+      <input type="range" min="0" max="0.2" step="0.005" value="0" data-param="smoothing" />
+    </label>
+    <dl class="stats" aria-live="polite">
+      <div><dt>samples</dt><dd data-stat="n">–</dd></div>
+      <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
+      <div><dt>SMO steps</dt><dd data-stat="steps">–</dd></div>
+      <div><dt>training time</dt><dd data-stat="time">–</dd></div>
+      <div><dt>points inside the tube</dt><dd data-stat="inside">–</dd></div>
+      <div><dt>mean absolute error</dt><dd data-stat="mae">–</dd></div>
+    </dl>
+    <p class="note">
+      ε-insensitive regression with the Rust solver in WebAssembly. Points inside the tube cost nothing,
+      so only the ringed points (on or outside its boundary) are support vectors; the segments show
+      how far the others stick out. Increase ε and the model gets sparser.
+    </p>
+  </div>
+</div>
+
+<script>
+  import { css, fmt, loadSolver, onTheme, setupCanvas, type Solver } from "../lib/plot";
+
+  const root = document.querySelector<HTMLElement>(".rdemo")!;
+  const canvas = root.querySelector("canvas")!;
+  const W = 560, H = 420, M = { l: 8, r: 8, t: 10, b: 10 };
+  const ctx = setupCanvas(canvas, W, H);
+  canvas.style.aspectRatio = `${W} / ${H}`;
+  const NX = 240; // curve resolution
+  let wasm: Solver | null = null;
+  let points: { x: number; y: number }[] = [];
+  let pending = 0;
+  let keyboardActive = false;
+  const cursor = { x: 0.5, y: 0.5 };
+  let last: { f: Float64Array | null; sv: Set<number>; eps: number } = { f: null, sv: new Set(), eps: 0 };
+
+  function rng(seed: number) {
+    return () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+  }
+
+  function preset(name: string) {
+    const r = rng(11);
+    const gauss = () => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
+    const pts: typeof points = [];
+    const sine = (x: number) => 0.5 + 0.32 * Math.sin(2 * Math.PI * x);
+    if (name === "sine") {
+      for (let i = 0; i < 70; i++) {
+        const x = r();
+        pts.push({ x, y: sine(x) + 0.045 * gauss() });
+      }
+    } else if (name === "line") {
+      for (let i = 0; i < 60; i++) {
+        const x = r();
+        pts.push({ x, y: 0.2 + 0.6 * x + 0.06 * gauss() });
+      }
+    } else if (name === "outliers") {
+      for (let i = 0; i < 70; i++) {
+        const x = r();
+        const out = r() < 0.1;
+        pts.push({ x, y: Math.min(0.97, Math.max(0.03, sine(x) + 0.03 * gauss() + (out ? (r() < 0.5 ? -1 : 1) * 0.3 : 0))) });
+      }
+    } else if (name === "gap") {
+      for (let i = 0; i < 60; i++) {
+        let x = r();
+        if (x > 0.4 && x < 0.62) x += 0.25;
+        pts.push({ x: Math.min(x, 1), y: sine(Math.min(x, 1)) + 0.04 * gauss() });
+      }
+    }
+    points = pts;
+  }
+
+  function params() {
+    const v = (k: string) => Number(root.querySelector<HTMLInputElement>(`[data-param=${k}]`)!.value);
+    return { eps: v("eps"), lam: 10 ** v("lam"), gamma: 10 ** v("gamma"), smoothing: v("smoothing") };
+  }
+
+  const px = (x: number) => M.l + x * (W - M.l - M.r);
+  const py = (y: number) => H - M.b - y * (H - M.t - M.b);
+
+  function render(f: Float64Array | null, sv: Set<number>, eps: number) {
+    last = { f, sv, eps };
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = css("--surface");
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = css("--line");
+    ctx.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      ctx.beginPath();
+      ctx.moveTo(M.l, py(k / 4));
+      ctx.lineTo(W - M.r, py(k / 4));
+      ctx.stroke();
+    }
+    const accent = css("--accent"), ink = css("--ink"), warm = css("--accent-2");
+    if (f) {
+      // tube
+      ctx.fillStyle = css("--accent-soft");
+      ctx.beginPath();
+      for (let i = 0; i < NX; i++) ctx[i ? "lineTo" : "moveTo"](px(i / (NX - 1)), py(f[i] + eps));
+      for (let i = NX - 1; i >= 0; i--) ctx.lineTo(px(i / (NX - 1)), py(f[i] - eps));
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1;
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        for (let i = 0; i < NX; i++) ctx[i ? "lineTo" : "moveTo"](px(i / (NX - 1)), py(f[i] + s * eps));
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // residual segments of points outside the tube
+      const at = (x: number) => {
+        const t = Math.min(Math.max(x, 0), 1) * (NX - 1), i = Math.min(Math.floor(t), NX - 2), a = t - i;
+        return f[i] * (1 - a) + f[i + 1] * a;
+      };
+      ctx.strokeStyle = warm;
+      ctx.lineWidth = 1.4;
+      for (const p of points) {
+        const fx = at(p.x), d = p.y - fx;
+        if (Math.abs(d) > eps) {
+          ctx.beginPath();
+          ctx.moveTo(px(p.x), py(p.y));
+          ctx.lineTo(px(p.x), py(fx + Math.sign(d) * eps));
+          ctx.stroke();
+        }
+      }
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      for (let i = 0; i < NX; i++) ctx[i ? "lineTo" : "moveTo"](px(i / (NX - 1)), py(f[i]));
+      ctx.stroke();
+    }
+    points.forEach((p, k) => {
+      ctx.fillStyle = ink;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.arc(px(p.x), py(p.y), 3.4, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (sv.has(k)) {
+        ctx.strokeStyle = warm;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(px(p.x), py(p.y), 7, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    });
+    if (document.activeElement === canvas && keyboardActive) {
+      const x = px(cursor.x), y = py(cursor.y);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, 2 * Math.PI);
+      ctx.moveTo(x - 16, y);
+      ctx.lineTo(x + 16, y);
+      ctx.moveTo(x, y - 16);
+      ctx.lineTo(x, y + 16);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  const setStat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
+
+  function train() {
+    const n = points.length;
+    setStat("n", String(n));
+    const { eps, lam, gamma, smoothing } = params();
+    if (!wasm || n < 2) {
+      for (const k of ["sv", "steps", "time", "inside", "mae"]) setStat(k, "–");
+      render(null, new Set(), eps);
+      return;
+    }
+    const e = wasm;
+    const pxs = e.alloc(n), pys = e.alloc(n), pg = e.alloc(NX), pf = e.alloc(NX), pt = e.alloc(n);
+    new Float64Array(e.memory.buffer, pxs, n).set(points.map((p) => p.x));
+    new Float64Array(e.memory.buffer, pys, n).set(points.map((p) => p.y));
+    const t0 = performance.now();
+    const steps = Number(e.train(pxs, n, 1, pys, 1, lam, gamma, smoothing, eps, 1e-4));
+    const dt = performance.now() - t0;
+    if (steps < 0) {
+      render(null, new Set(), eps);
+      for (const p of [pxs, pys, pg, pf, pt]) e.dealloc(p, n);
+      return;
+    }
+    new Float64Array(e.memory.buffer, pg, NX).set(Array.from({ length: NX }, (_, i) => i / (NX - 1)));
+    e.decision(pg, NX, pf);
+    const f = new Float64Array(new Float64Array(e.memory.buffer, pf, NX));
+    e.decision(pxs, n, pt);
+    const fit = new Float64Array(e.memory.buffer, pt, n);
+    let inside = 0, mae = 0;
+    points.forEach((p, k) => {
+      const d = Math.abs(p.y - fit[k]);
+      mae += d / n;
+      if (d <= eps + 1e-9) inside++;
+    });
+    const nsv = Number(e.support(0));
+    const ps = e.alloc(Math.max(nsv, 1));
+    e.support(ps);
+    // for regression the solver numbers the two copies of each sample: map back to samples
+    const sv = new Set(Array.from(new Float64Array(e.memory.buffer, ps, nsv), (v) => Number(v) % n));
+    setStat("sv", `${sv.size} (${Math.round((100 * sv.size) / n)} %)`);
+    setStat("steps", steps.toLocaleString("en"));
+    setStat("time", `${dt.toFixed(1)} ms`);
+    setStat("inside", `${inside} (${Math.round((100 * inside) / n)} %)`);
+    setStat("mae", mae.toFixed(3));
+    for (const [p, len] of [[pxs, n], [pys, n], [pg, NX], [pf, NX], [pt, n], [ps, Math.max(nsv, 1)]]) e.dealloc(p, len);
+    render(f, sv, eps);
+  }
+
+  function schedule() {
+    const { eps, lam, gamma, smoothing } = params();
+    const out = (k: string, s: string) => (root.querySelector(`[data-out=${k}]`)!.textContent = s);
+    out("eps", eps.toFixed(3));
+    out("lam", fmt(lam));
+    out("gamma", fmt(gamma));
+    out("smoothing", smoothing.toFixed(3));
+    cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(train);
+  }
+
+  function activate(group: Element, button: Element) {
+    group.querySelectorAll(".chip").forEach((b) => {
+      b.classList.toggle("active", b === button);
+      b.setAttribute("aria-pressed", String(b === button));
+    });
+  }
+
+  function toData(ev: MouseEvent) {
+    const r = canvas.getBoundingClientRect();
+    const sx = W / r.width, sy = H / r.height;
+    return {
+      x: Math.min(1, Math.max(0, ((ev.clientX - r.left) * sx - M.l) / (W - M.l - M.r))),
+      y: Math.min(1, Math.max(0, 1 - ((ev.clientY - r.top) * sy - M.t) / (H - M.t - M.b))),
+    };
+  }
+
+  root.querySelectorAll("[data-param]").forEach((el) => el.addEventListener("input", schedule));
+  root.querySelector("[data-presets]")!.addEventListener("click", (ev) => {
+    const b = (ev.target as HTMLElement).closest("[data-preset]");
+    if (!b) return;
+    activate(b.parentElement!, b);
+    preset(b.getAttribute("data-preset")!);
+    schedule();
+  });
+  canvas.addEventListener("click", (ev) => {
+    keyboardActive = false;
+    const p = toData(ev);
+    if (ev.shiftKey && points.length) {
+      let best = 0, bd = Infinity;
+      points.forEach((q, k) => {
+        const d = (q.x - p.x) ** 2 + ((q.y - p.y) * 0.75) ** 2;
+        if (d < bd) [best, bd] = [k, d];
+      });
+      points.splice(best, 1);
+    } else {
+      points.push(p);
+    }
+    schedule();
+  });
+  canvas.addEventListener("keydown", (ev) => {
+    const step = ev.shiftKey && ev.key !== "Enter" ? 0.1 : 0.02;
+    const move: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step],
+    };
+    if (ev.key in move) {
+      cursor.x = Math.min(1, Math.max(0, cursor.x + move[ev.key][0]));
+      cursor.y = Math.min(1, Math.max(0, cursor.y + move[ev.key][1]));
+    } else if (ev.key === "Enter" || ev.key === " ") {
+      points.push({ x: cursor.x, y: cursor.y });
+      schedule();
+    } else if (ev.key === "Backspace" || ev.key === "Delete") {
+      points.pop();
+      schedule();
+    } else {
+      return;
+    }
+    ev.preventDefault();
+    keyboardActive = true;
+    render(last.f, last.sv, last.eps);
+  });
+  canvas.addEventListener("focus", () => {
+    keyboardActive = true;
+    render(last.f, last.sv, last.eps);
+  });
+  canvas.addEventListener("blur", () => render(last.f, last.sv, last.eps));
+  onTheme(() => render(last.f, last.sv, last.eps));
+
+  preset("sine");
+  schedule();
+  loadSolver(root.dataset.wasm!).then((s) => {
+    wasm = s;
+    schedule();
+  });
+</script>
+
+<style>
+  canvas {
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  canvas:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+</style>

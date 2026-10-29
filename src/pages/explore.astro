@@ -1,0 +1,98 @@
+---
+import Base from "../layouts/Base.astro";
+import RegressionDemo from "../components/RegressionDemo.astro";
+import LossExplorer from "../components/LossExplorer.astro";
+import HpoPath from "../components/HpoPath.astro";
+import GradientSlice from "../components/GradientSlice.astro";
+import ArdBars from "../components/ArdBars.astro";
+
+const description =
+  "Interactive explainers for support vector machines: regression with the ε-tube, smoothed loss functions, gradient-based hyperparameter optimization, exact hypergradients and automatic relevance determination.";
+---
+
+<Base title="Explore: interactive SVM explainers" description={description}>
+  <section class="intro">
+    <div class="wrap">
+      <p class="eyebrow">Explore</p>
+      <h1>See the ideas at work</h1>
+      <p class="lead">
+        Small interactive experiments built on the solver and the optimizer of the thesis. The first two run
+        the Rust solver compiled to WebAssembly in your browser; the others replay precomputed runs of
+        <code>optimized-svm</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="regression">
+    <div class="wrap">
+      <p class="eyebrow">Regression</p>
+      <h2>The ε-tube and sparse solutions</h2>
+      <p class="lead">
+        Points inside the tube do not contribute to the loss, so the model depends only on the points at
+        or beyond its boundary. Draw your own data, widen the tube and watch the support vectors disappear.
+      </p>
+      <RegressionDemo />
+    </div>
+  </section>
+
+  <section id="loss">
+    <div class="wrap">
+      <p class="eyebrow">Smoothing</p>
+      <h2>Why a smoothed loss makes hyperparameters differentiable</h2>
+      <p class="lead">
+        The hinge and ε-insensitive losses have kinks, so the solution of the training problem is not
+        differentiable in the hyperparameters. Replacing <code>max(0, t)</code> by a smooth approximation of
+        width δ rounds the kinks; only the few terms inside the band of width 2δ have positive curvature and
+        react to a change of the hyperparameters.
+      </p>
+      <LossExplorer />
+    </div>
+  </section>
+
+  <section id="hpo">
+    <div class="wrap">
+      <p class="eyebrow">Hyperparameter optimization</p>
+      <h2>Follow the gradient instead of the grid</h2>
+      <p class="lead">
+        Because the smoothed solution is differentiable, the cross-validation error has an exact gradient
+        with respect to λ and γ. A quasi-Newton method needs a handful of evaluations where a grid needs
+        hundreds. Press replay and watch the model improve along the path.
+      </p>
+      <HpoPath />
+    </div>
+  </section>
+
+  <section id="gradient">
+    <div class="wrap">
+      <p class="eyebrow">Hypergradient</p>
+      <h2>An exact gradient of the validation error</h2>
+      <p class="lead">
+        The implicit function theorem turns the optimality conditions of the smoothed training problem into an
+        exact derivative of the cross-validation error with respect to the hyperparameters. Move the marker
+        along the curve: the tangent always has the slope of the gradient.
+      </p>
+      <GradientSlice />
+    </div>
+  </section>
+
+  <section id="ard">
+    <div class="wrap">
+      <p class="eyebrow">Many hyperparameters</p>
+      <h2>One kernel width per feature</h2>
+      <p class="lead">
+        Because the cost of the gradient does not grow with the number of hyperparameters, every feature can
+        get its own kernel scaling. Irrelevant features are switched off automatically.
+      </p>
+      <ArdBars />
+    </div>
+  </section>
+</Base>
+
+<style>
+  .intro {
+    padding: 3rem 0 1rem;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+  }
+</style>

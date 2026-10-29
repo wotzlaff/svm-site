@@ -1,0 +1,144 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="ard card explainer" data-src={`${base}/data/ard-path.json`}>
+  <div>
+    <svg class="plot" viewBox="0 0 560 340" role="img" aria-labelledby="ard-title ard-desc">
+      <title id="ard-title">Optimized kernel scalings per feature</title>
+      <desc id="ard-desc">Bar chart of the logarithm of the kernel scaling of each of eight features during the optimization. The three informative features keep a large scaling while the five noise features shrink towards zero.</desc>
+    </svg>
+    <p class="hint">Synthetic data: y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise, plus five noise features. One run (fixed seed, n = 400).</p>
+  </div>
+  <div>
+    <div class="btn-row" style="margin-top: 0">
+      <button class="btn small primary" data-play type="button">▶ Replay</button>
+    </div>
+    <label class="slider" style="margin-top: 0.9rem">
+      <span>Evaluation <output data-out="step"></output></span>
+      <input type="range" min="0" max="0" step="1" value="0" data-param="step" />
+    </label>
+    <dl class="stats" aria-live="polite">
+      <div><dt>CV error</dt><dd data-stat="err">–</dd></div>
+      <div><dt>log₁₀ λ</dt><dd data-stat="lam">–</dd></div>
+    </dl>
+    <p class="note">
+      Automatic relevance determination gives every feature its own kernel scaling and tunes all of them by
+      gradient descent. A scaling near zero switches a feature off. Here the optimizer needs a few dozen
+      CV evaluations for eight scalings; a grid over eight dimensions is out of the question. The
+      adjoint gradient costs the same for one hyperparameter or for hundreds.
+    </p>
+  </div>
+</div>
+
+<script>
+  import { onTheme } from "../lib/plot";
+
+  type Data = {
+    n_features: number;
+    relevant: number[];
+    iterates: { error: number; log10_scaling: number[]; log10_lam: number }[];
+  };
+  const root = document.querySelector<HTMLElement>(".ard")!;
+  const svg = root.querySelector("svg")!;
+  const slider = root.querySelector<HTMLInputElement>("[data-param=step]")!;
+  const playBtn = root.querySelector<HTMLButtonElement>("[data-play]")!;
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 560, H = 340, M = { l: 56, r: 14, t: 14, b: 50 };
+  const FLOOR = -4; // log10 scaling shown at the bottom
+  let data: Data;
+  let step = 0;
+  let timer = 0;
+  const names = ["x₁", "x₂", "x₃", "x₄", "x₅", "x₆", "x₇", "x₈"];
+
+  function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, text?: string) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function draw() {
+    const p = data.iterates[step];
+    const lo = FLOOR, hi = 0.5;
+    const py = (v: number) => H - M.b - ((Math.max(v, lo) - lo) / (hi - lo)) * (H - M.t - M.b);
+    const bw = (W - M.l - M.r) / data.n_features;
+    svg.replaceChildren(svg.querySelector("title")!, svg.querySelector("desc")!);
+    for (let v = lo; v <= 0; v++) {
+      svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(v), y2: py(v), class: "grid" }));
+      svg.append(el("text", { x: M.l - 6, y: py(v) + 3, class: "tick", "text-anchor": "end" }, v === lo ? `≤ 1e${v}` : `1e${v}`));
+    }
+    svg.append(el("text", { x: 14, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 14 ${M.t + (H - M.t - M.b) / 2})` }, "kernel scaling s"));
+    p.log10_scaling.forEach((v, k) => {
+      const rel = data.relevant.includes(k);
+      const x = M.l + k * bw + bw * 0.18, w = bw * 0.64;
+      const y = py(v);
+      svg.append(el("rect", { x, y, width: w, height: Math.max(H - M.b - y, 1), class: rel ? "bar rel" : "bar" }));
+      svg.append(el("text", { x: x + w / 2, y: H - M.b + 17, class: "tick", "text-anchor": "middle" }, names[k]));
+      svg.append(el("text", { x: x + w / 2, y: H - M.b + 31, class: "tick small", "text-anchor": "middle" }, rel ? "informative" : "noise"));
+    });
+    slider.value = String(step);
+    root.querySelector("[data-out=step]")!.textContent = `${step + 1} / ${data.iterates.length}`;
+    root.querySelector("[data-stat=err]")!.textContent = p.error.toFixed(4);
+    root.querySelector("[data-stat=lam]")!.textContent = p.log10_lam.toFixed(2);
+  }
+
+  function stop() {
+    clearInterval(timer);
+    timer = 0;
+    playBtn.textContent = "▶ Replay";
+  }
+  playBtn.addEventListener("click", () => {
+    if (timer) return stop();
+    step = 0;
+    draw();
+    playBtn.textContent = "❚❚ Pause";
+    timer = window.setInterval(() => {
+      if (step >= data.iterates.length - 1) return stop();
+      step++;
+      draw();
+    }, 320);
+  });
+  slider.addEventListener("input", () => {
+    stop();
+    step = Number(slider.value);
+    draw();
+  });
+  onTheme(() => data && draw());
+  fetch(root.dataset.src!)
+    .then((r) => r.json())
+    .then((d: Data) => {
+      data = d;
+      step = d.iterates.length - 1;
+      slider.max = String(step);
+      draw();
+    });
+</script>
+
+<style is:global>
+  .ard svg .grid {
+    stroke: var(--line);
+    stroke-width: 1;
+  }
+  .ard svg .bar {
+    fill: var(--muted);
+    opacity: 0.55;
+  }
+  .ard svg .bar.rel {
+    fill: var(--accent);
+    opacity: 1;
+  }
+  .ard svg .tick {
+    fill: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .ard svg .tick.small {
+    font-size: 9.5px;
+    font-family: var(--sans);
+  }
+  .ard svg .lbl {
+    fill: var(--ink-2);
+    font-size: 12px;
+    font-family: var(--sans);
+  }
+</style>

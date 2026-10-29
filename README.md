@@ -22,6 +22,7 @@ npm run build      # static output in dist/
 |---|---|
 | `public/wasm/smo_solver_wasm.wasm` | `npm run wasm` (needs the sibling checkout `../smo-solver` and the Rust target `wasm32-unknown-unknown`) |
 | `public/figures/*-{light,dark}.svg`, `hpo-summary.json` | `python scripts/make_figures.py` (needs `optimized-svm` and `matplotlib`) |
+| `public/data/*.json` (HPO path, gradient slice, ARD path of the Explore page) | `python scripts/make_explorer_data.py` (needs `optimized-svm`) |
 | `public/figures/thesis/*.png` | figures of the dissertation |
 | `src/data/thesis.ts` | chapter outline, BibTeX and Table 10.4.1 |
 

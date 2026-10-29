@@ -1,0 +1,284 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="hpo-path card explainer" data-src={`${base}/data/hpo-path.json`}>
+  <div>
+    <canvas class="land" aria-label="Cross-validation error over log λ and log γ with the optimization path" role="img"></canvas>
+    <p class="hint">Colour: 5-fold CV error on a 25 × 25 grid; the most saturated basin is the optimum. The line is the path of the gradient method (L-BFGS-B); the triangle marks the best grid point.</p>
+    <p class="readout" data-summary aria-live="polite"></p>
+  </div>
+  <div>
+    <canvas class="dec" aria-label="Decision boundary of the model at the current iterate" role="img"></canvas>
+    <div class="btn-row">
+      <button class="btn small primary" data-play type="button">▶ Replay</button>
+      <button class="btn small" data-grid type="button" aria-pressed="false">Show grid points</button>
+    </div>
+    <label class="slider" style="margin-top: 0.9rem">
+      <span>Evaluation <output data-out="step"></output></span>
+      <input type="range" min="0" max="0" step="1" value="0" data-param="step" />
+    </label>
+    <dl class="stats" aria-live="polite">
+      <div><dt>log₁₀ λ</dt><dd data-stat="lam">–</dd></div>
+      <div><dt>log₁₀ γ</dt><dd data-stat="gamma">–</dd></div>
+      <div><dt>CV error</dt><dd data-stat="err">–</dd></div>
+      <div><dt>evaluations</dt><dd data-stat="count">–</dd></div>
+    </dl>
+  </div>
+</div>
+
+<script>
+  import { contour, css, fmt, mix, onTheme, rgb, setupCanvas } from "../lib/plot";
+
+  type Data = {
+    grid: number;
+    log10_lam: number[];
+    log10_gamma: number[];
+    cv_error: number[][];
+    grid_best: { log10_lam: number; log10_gamma: number; error: number };
+    points: [number, number, number][];
+    iterates: { log10_lam: number; log10_gamma: number; error: number; decision: number[] }[];
+  };
+
+  const root = document.querySelector<HTMLElement>(".hpo-path")!;
+  const land = root.querySelector<HTMLCanvasElement>("canvas.land")!;
+  const dec = root.querySelector<HTMLCanvasElement>("canvas.dec")!;
+  const LW = 560, LH = 520, DS = 380;
+  const lctx = setupCanvas(land, LW, LH);
+  const dctx = setupCanvas(dec, DS, DS);
+  land.style.aspectRatio = `${LW} / ${LH}`;
+  dec.style.aspectRatio = "1";
+  const slider = root.querySelector<HTMLInputElement>("[data-param=step]")!;
+  const playBtn = root.querySelector<HTMLButtonElement>("[data-play]")!;
+  const gridBtn = root.querySelector<HTMLButtonElement>("[data-grid]")!;
+  let data: Data;
+  let step = 0;
+  let showGrid = false;
+  let timer = 0;
+  const M = { l: 46, r: 12, t: 12, b: 38 };
+
+  const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
+
+  function layout() {
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const x0 = xs[0], x1 = xs[xs.length - 1], y0 = ys[0], y1 = ys[ys.length - 1];
+    const px = (x: number) => M.l + ((x - x0) / (x1 - x0)) * (LW - M.l - M.r);
+    const py = (y: number) => LH - M.b - ((y - y0) / (y1 - y0)) * (LH - M.t - M.b);
+    return { x0, x1, y0, y1, px, py };
+  }
+
+  function drawLandscape() {
+    const { x0, x1, y0, y1, px, py } = layout();
+    const n = data.cv_error.length; // landscape grid (the decision functions use data.grid)
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const V = data.cv_error.map((row) => row.map((e) => Math.log10(e)));
+    const flat = V.flat();
+    const vmin = Math.min(...flat), vmax = Math.max(...flat);
+    const ink = css("--ink"), surface = rgb(css("--surface")), accent = rgb(css("--accent"));
+    // the best region gets the most conspicuous colour: dark navy on light, bright blue on dark backgrounds
+    const dark = 0.299 * surface[0] + 0.587 * surface[1] + 0.114 * surface[2] < 128;
+    const deep = dark ? mix(accent, [255, 255, 255], 0.3) : mix(accent, rgb(ink), 0.55);
+    lctx.fillStyle = css("--surface");
+    lctx.fillRect(0, 0, LW, LH);
+    // heat map: bilinear interpolation of the grid
+    const w = Math.round(LW - M.l - M.r), h = Math.round(LH - M.t - M.b);
+    const img = lctx.createImageData(w, h);
+    const at = (fx: number, fy: number) => {
+      const gx = Math.min(Math.max(fx, 0), n - 1.0001), gy = Math.min(Math.max(fy, 0), n - 1.0001);
+      const i = Math.floor(gx), j = Math.floor(gy), a = gx - i, b = gy - j;
+      return V[j][i] * (1 - a) * (1 - b) + V[j][i + 1] * a * (1 - b) + V[j + 1][i] * (1 - a) * b + V[j + 1][i + 1] * a * b;
+    };
+    // the canvas context is scaled by 2: draw at logical resolution through an offscreen canvas
+    for (let yy = 0; yy < h; yy++) {
+      for (let xx = 0; xx < w; xx++) {
+        const v = at((xx / (w - 1)) * (n - 1), ((h - 1 - yy) / (h - 1)) * (n - 1));
+        const t = Math.pow((v - vmin) / (vmax - vmin), 0.8);
+        const c = t < 0.5 ? mix(deep, accent, t * 2) : mix(accent, surface, (t - 0.5) * 2 * 0.92);
+        const o = 4 * (yy * w + xx);
+        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+      }
+    }
+    const off = new OffscreenCanvas(w, h);
+    off.getContext("2d")!.putImageData(img, 0, 0);
+    lctx.imageSmoothingEnabled = true;
+    lctx.drawImage(off, M.l, M.t, LW - M.l - M.r, LH - M.t - M.b);
+    // contour lines
+    lctx.strokeStyle = dark ? css("--surface") : ink;
+    lctx.globalAlpha = dark ? 0.4 : 0.28;
+    lctx.lineWidth = 0.8;
+    for (let k = 1; k < 12; k++) {
+      const level = vmin + ((vmax - vmin) * k) / 12;
+      lctx.beginPath();
+      for (const [a, b, c, d] of contour((i, j) => V[j][i], n, n, level)) {
+        lctx.moveTo(px(x0 + (a / (n - 1)) * (x1 - x0)), py(y0 + (b / (n - 1)) * (y1 - y0)));
+        lctx.lineTo(px(x0 + (c / (n - 1)) * (x1 - x0)), py(y0 + (d / (n - 1)) * (y1 - y0)));
+      }
+      lctx.stroke();
+    }
+    lctx.globalAlpha = 1;
+    // frame and axes
+    lctx.strokeStyle = css("--muted");
+    lctx.lineWidth = 1;
+    lctx.strokeRect(M.l, M.t, LW - M.l - M.r, LH - M.t - M.b);
+    lctx.fillStyle = css("--muted");
+    lctx.font = "11px " + css("--mono");
+    lctx.textAlign = "center";
+    for (let t = Math.ceil(x0); t <= x1; t++) {
+      lctx.fillText(String(t), px(t), LH - M.b + 15);
+      lctx.beginPath(); lctx.moveTo(px(t), LH - M.b); lctx.lineTo(px(t), LH - M.b + 4); lctx.stroke();
+    }
+    lctx.textAlign = "right";
+    for (let t = Math.ceil(y0); t <= y1; t++) {
+      lctx.fillText(String(t), M.l - 7, py(t) + 4);
+      lctx.beginPath(); lctx.moveTo(M.l - 4, py(t)); lctx.lineTo(M.l, py(t)); lctx.stroke();
+    }
+    lctx.fillStyle = css("--ink-2");
+    lctx.font = "12px " + css("--sans");
+    lctx.textAlign = "center";
+    lctx.fillText("log₁₀ λ  (regularization)", M.l + (LW - M.l - M.r) / 2, LH - 6);
+    lctx.save();
+    lctx.translate(13, M.t + (LH - M.t - M.b) / 2);
+    lctx.rotate(-Math.PI / 2);
+    lctx.fillText("log₁₀ γ  (kernel width)", 0, 0);
+    lctx.restore();
+    // grid points
+    if (showGrid) {
+      lctx.fillStyle = css("--ink");
+      lctx.globalAlpha = 0.55;
+      for (const gy of ys) for (const gx of xs) { lctx.beginPath(); lctx.arc(px(gx), py(gy), 1.7, 0, 7); lctx.fill(); }
+      lctx.globalAlpha = 1;
+    }
+    // optimizer path up to the current step
+    const warm = css("--accent-2"), it = data.iterates;
+    lctx.strokeStyle = css("--surface");
+    lctx.lineWidth = 4;
+    lctx.beginPath();
+    it.slice(0, step + 1).forEach((p, k) => lctx[k ? "lineTo" : "moveTo"](px(p.log10_lam), py(p.log10_gamma)));
+    lctx.stroke();
+    lctx.strokeStyle = ink;
+    lctx.lineWidth = 1.8;
+    lctx.beginPath();
+    it.slice(0, step + 1).forEach((p, k) => lctx[k ? "lineTo" : "moveTo"](px(p.log10_lam), py(p.log10_gamma)));
+    lctx.stroke();
+    it.slice(0, step + 1).forEach((p, k) => {
+      lctx.fillStyle = k === step ? warm : ink;
+      lctx.strokeStyle = css("--surface");
+      lctx.lineWidth = 1.5;
+      lctx.beginPath();
+      lctx.arc(px(p.log10_lam), py(p.log10_gamma), k === step ? 6 : 3.2, 0, 7);
+      lctx.fill();
+      if (k === step) lctx.stroke();
+    });
+    // best grid point
+    const g = data.grid_best;
+    lctx.strokeStyle = css("--surface");
+    lctx.fillStyle = ink;
+    lctx.lineWidth = 1.5;
+    lctx.beginPath();
+    lctx.moveTo(px(g.log10_lam), py(g.log10_gamma) - 6);
+    lctx.lineTo(px(g.log10_lam) + 6, py(g.log10_gamma) + 5);
+    lctx.lineTo(px(g.log10_lam) - 6, py(g.log10_gamma) + 5);
+    lctx.closePath();
+    lctx.fill();
+    lctx.stroke();
+  }
+
+  function drawDecision() {
+    const p = data.iterates[step], n = data.grid;
+    const bg = rgb(css("--surface")), pos = rgb(css("--accent")), neg = rgb(css("--accent-2"));
+    const img = dctx.createImageData(n, n);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const d = p.decision[j * n + i];
+        const w = (Math.min(Math.abs(d), 1.5) / 1.5) * 0.32;
+        const c = mix(bg, d > 0 ? pos : neg, w);
+        const o = 4 * ((n - 1 - j) * n + i);
+        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+      }
+    }
+    const off = new OffscreenCanvas(n, n);
+    off.getContext("2d")!.putImageData(img, 0, 0);
+    dctx.imageSmoothingEnabled = true;
+    dctx.drawImage(off, 0, 0, DS, DS);
+    dctx.strokeStyle = css("--ink");
+    dctx.lineWidth = 2;
+    dctx.beginPath();
+    const s = DS / (n - 1);
+    for (const [a, b, c, d] of contour((i, j) => p.decision[j * n + i], n, n, 0)) {
+      dctx.moveTo(a * s, DS - b * s);
+      dctx.lineTo(c * s, DS - d * s);
+    }
+    dctx.stroke();
+    for (const [x, y, c] of data.points) {
+      dctx.fillStyle = c > 0 ? css("--accent") : css("--accent-2");
+      dctx.beginPath();
+      dctx.arc(x * DS, (1 - y) * DS, 3, 0, 7);
+      dctx.fill();
+    }
+  }
+
+  function update() {
+    const p = data.iterates[step];
+    slider.value = String(step);
+    root.querySelector("[data-out=step]")!.textContent = `${step + 1} / ${data.iterates.length}`;
+    stat("lam", p.log10_lam.toFixed(2));
+    stat("gamma", p.log10_gamma.toFixed(2));
+    stat("err", p.error.toFixed(4));
+    stat("count", String(step + 1));
+    const best = Math.min(...data.iterates.slice(0, step + 1).map((q) => q.error));
+    root.querySelector("[data-summary]")!.textContent =
+      `Gradient method: best CV error ${best.toFixed(4)} after ${step + 1} evaluation${step ? "s" : ""}. ` +
+      `Grid search: best ${data.grid_best.error.toFixed(4)} after ${data.cv_error.length ** 2} evaluations (triangle).`;
+    drawLandscape();
+    drawDecision();
+  }
+
+  function stop() {
+    clearInterval(timer);
+    timer = 0;
+    playBtn.textContent = "▶ Replay";
+  }
+
+  playBtn.addEventListener("click", () => {
+    if (timer) return stop();
+    step = 0;
+    update();
+    playBtn.textContent = "❚❚ Pause";
+    timer = window.setInterval(() => {
+      if (step >= data.iterates.length - 1) return stop();
+      step++;
+      update();
+    }, 650);
+  });
+  slider.addEventListener("input", () => {
+    stop();
+    step = Number(slider.value);
+    update();
+  });
+  gridBtn.addEventListener("click", () => {
+    showGrid = !showGrid;
+    gridBtn.setAttribute("aria-pressed", String(showGrid));
+    gridBtn.textContent = showGrid ? "Hide grid points" : "Show grid points";
+    update();
+  });
+  onTheme(() => data && update());
+
+  fetch(root.dataset.src!)
+    .then((r) => r.json())
+    .then((d: Data) => {
+      data = d;
+      step = d.iterates.length - 1;
+      slider.max = String(step);
+      update();
+    });
+</script>
+
+<style>
+  .readout {
+    margin: 1rem 0 0;
+    padding: 0.8rem 1rem;
+    border-radius: 10px;
+    background: var(--surface-2);
+    font-size: 0.92rem;
+    color: var(--ink);
+  }
+</style>
