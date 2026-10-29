@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import TeX from "../components/Math.astro";
 import Demo from "../components/Demo.astro";
+import HeroPath from "../components/HeroPath.astro";
+import hpoPath from "../../public/data/hpo-path.json";
 import { thesis, chapters, regressionTable } from "../data/thesis";
 import hpo from "../../public/figures/hpo-summary.json";
 
@@ -21,25 +23,30 @@ const description =
         <h1>{thesis.title}</h1>
         <p class="author">{thesis.author}</p>
         <p class="lead">
-          Support vector machines are trained by solving a convex optimization problem — and tuned by
-          searching a grid of hyperparameters. This thesis develops a general duality framework, analyses
-          and improves the classical SMO method, introduces a Newton method for the primal problem and
-          shows that, with suitably <em>smoothed</em> losses, the cross-validation error becomes
-          differentiable in the hyperparameters. Grid search can then be replaced by gradient-based
-          optimization, even for one kernel width per feature.
+          Support vector machines are trained by solving a convex optimization problem and tuned by
+          searching a grid of hyperparameters. This thesis shows that with suitably <em>smoothed</em> losses
+          the cross-validation error becomes differentiable in the hyperparameters, so that gradient-based
+          optimization can replace grid search — even with one kernel width per feature.
         </p>
         <div class="actions">
           {thesis.pdf
             ? <a class="btn primary" href={thesis.pdf}>Read the thesis (PDF)</a>
             : <a class="btn primary" href="#thesis">About the thesis</a>}
           <a class="btn" href="#demo">Try the demo</a>
-          <a class="btn" href="#software">Python &amp; Rust packages</a>
+          <a class="btn" href={`${base}/explore/`}>Explore</a>
+          <a class="btn" href="#software">Software</a>
         </div>
+        <dl class="facts">
+          <div><dt>{hpoPath.iterates.length} instead of {hpoPath.cv_error.length ** 2}</dt><dd>CV evaluations: gradient method vs. grid</dd></div>
+          <div><dt>exact</dt><dd>hypergradients, checked against finite differences</dd></div>
+          <div><dt>≈ LIBSVM</dt><dd>speed of the Rust SMO solver</dd></div>
+        </dl>
       </div>
       <figure class="hero-fig card">
+        <HeroPath />
         <img class="theme-img light" src={fig("checkerboard-light.svg")} alt="Decision boundary of an optimized SVM on a checkerboard dataset" width="400" height="400" />
         <img class="theme-img dark" src={fig("checkerboard-dark.svg")} alt="" width="400" height="400" />
-        <figcaption>
+        <figcaption class="static-caption">
           Checkerboard data of the computational study, classified with hyperparameters found by
           gradient descent on the CV error (λ = {hpo.lam.toPrecision(2)}, γ = {hpo.gamma.toPrecision(3)}).
         </figcaption>
@@ -328,6 +335,25 @@ OptimizedSVC(blocks="features").fit(X, y)</code></pre>
     flex-wrap: wrap;
     gap: 0.6rem;
     margin-top: 1.6rem;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem 1.4rem;
+    margin: 2rem 0 0;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--line);
+  }
+  .facts dt {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 1.15rem;
+    color: var(--ink);
+  }
+  .facts dd {
+    margin: 0.15rem 0 0;
+    font-size: 0.86rem;
+    color: var(--muted);
   }
   .hero-fig img {
     width: 100%;

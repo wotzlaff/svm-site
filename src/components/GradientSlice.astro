@@ -29,14 +29,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </div>
 
 <script>
-  import { fmt, onTheme } from "../lib/plot";
+  import { fmt, observeWidth, onTheme } from "../lib/plot";
 
   type Data = { scaling: number; log10_lam: number[]; cv_error: number[]; d_log10_lam: number[] };
   const root = document.querySelector<HTMLElement>(".gslice")!;
   const svg = root.querySelector("svg")!;
   const slider = root.querySelector<HTMLInputElement>("[data-param=i]")!;
   const NS = "http://www.w3.org/2000/svg";
-  const W = 560, H = 380, M = { l: 54, r: 14, t: 16, b: 44 };
+  let W = 560, H = 380;
+  const M = { l: 54, r: 14, t: 16, b: 44 };
   let data: Data;
 
   function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, text?: string) {
@@ -48,6 +49,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
 
   function draw() {
+    H = Math.round(Math.min(380, Math.max(280, W * 0.68)));
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const x = data.log10_lam, y = data.cv_error, g = data.d_log10_lam;
     const i = Number(slider.value);
     const x0 = x[0], x1 = x[x.length - 1];
@@ -97,6 +100,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   slider.addEventListener("input", draw);
   onTheme(() => data && draw());
+  observeWidth(svg, (w) => {
+    W = Math.max(300, w);
+    if (data) draw();
+  });
   fetch(root.dataset.src!)
     .then((r) => r.json())
     .then((d: Data) => {

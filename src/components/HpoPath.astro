@@ -27,7 +27,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </div>
 
 <script>
-  import { contour, css, fmt, mix, onTheme, rgb, setupCanvas } from "../lib/plot";
+  import { contour, css, mix, observeWidth, onTheme, rgb, setupCanvas } from "../lib/plot";
 
   type Data = {
     grid: number;
@@ -42,10 +42,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const root = document.querySelector<HTMLElement>(".hpo-path")!;
   const land = root.querySelector<HTMLCanvasElement>("canvas.land")!;
   const dec = root.querySelector<HTMLCanvasElement>("canvas.dec")!;
-  const LW = 560, LH = 520, DS = 380;
-  const lctx = setupCanvas(land, LW, LH);
+  let LW = 560, LH = 520;
+  const DS = 380;
+  let lctx = setupCanvas(land, LW, LH);
   const dctx = setupCanvas(dec, DS, DS);
-  land.style.aspectRatio = `${LW} / ${LH}`;
   dec.style.aspectRatio = "1";
   const slider = root.querySelector<HTMLInputElement>("[data-param=step]")!;
   const playBtn = root.querySelector<HTMLButtonElement>("[data-play]")!;
@@ -261,6 +261,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     update();
   });
   onTheme(() => data && update());
+  observeWidth(land, (w) => {
+    LW = Math.max(300, w);
+    LH = Math.round(Math.min(520, Math.max(320, LW * 0.93)));
+    land.style.aspectRatio = `${LW} / ${LH}`;
+    lctx = setupCanvas(land, LW, LH);
+    if (data) drawLandscape();
+  });
 
   fetch(root.dataset.src!)
     .then((r) => r.json())

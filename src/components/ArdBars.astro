@@ -7,7 +7,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <title id="ard-title">Optimized kernel scalings per feature</title>
       <desc id="ard-desc">Bar chart of the logarithm of the kernel scaling of each of eight features during the optimization. The three informative features keep a large scaling while the five noise features shrink towards zero.</desc>
     </svg>
-    <p class="hint">Synthetic data: y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise, plus five noise features. One run (fixed seed, n = 400).</p>
+    <p class="hint">Blue: features that enter the function; grey: pure noise. Synthetic data y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise with five additional noise features; one run (fixed seed, n = 400).</p>
   </div>
   <div>
     <div class="btn-row" style="margin-top: 0">
@@ -31,7 +31,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </div>
 
 <script>
-  import { onTheme } from "../lib/plot";
+  import { observeWidth, onTheme } from "../lib/plot";
 
   type Data = {
     n_features: number;
@@ -43,7 +43,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const slider = root.querySelector<HTMLInputElement>("[data-param=step]")!;
   const playBtn = root.querySelector<HTMLButtonElement>("[data-play]")!;
   const NS = "http://www.w3.org/2000/svg";
-  const W = 560, H = 340, M = { l: 56, r: 14, t: 14, b: 50 };
+  let W = 560, H = 340;
+  const M = { l: 56, r: 14, t: 14, b: 50 };
   const FLOOR = -4; // log10 scaling shown at the bottom
   let data: Data;
   let step = 0;
@@ -58,6 +59,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   function draw() {
+    H = Math.round(Math.min(340, Math.max(270, W * 0.62)));
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const p = data.iterates[step];
     const lo = FLOOR, hi = 0.5;
     const py = (v: number) => H - M.b - ((Math.max(v, lo) - lo) / (hi - lo)) * (H - M.t - M.b);
@@ -74,7 +77,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       const y = py(v);
       svg.append(el("rect", { x, y, width: w, height: Math.max(H - M.b - y, 1), class: rel ? "bar rel" : "bar" }));
       svg.append(el("text", { x: x + w / 2, y: H - M.b + 17, class: "tick", "text-anchor": "middle" }, names[k]));
-      svg.append(el("text", { x: x + w / 2, y: H - M.b + 31, class: "tick small", "text-anchor": "middle" }, rel ? "informative" : "noise"));
+      svg.append(el("text", { x: x + w / 2, y: H - M.b + 31, class: "tick small", "text-anchor": "middle" }, rel ? "signal" : "noise"));
     });
     slider.value = String(step);
     root.querySelector("[data-out=step]")!.textContent = `${step + 1} / ${data.iterates.length}`;
@@ -104,6 +107,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     draw();
   });
   onTheme(() => data && draw());
+  observeWidth(svg, (w) => {
+    W = Math.max(300, w);
+    if (data) draw();
+  });
   fetch(root.dataset.src!)
     .then((r) => r.json())
     .then((d: Data) => {

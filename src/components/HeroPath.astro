@@ -1,0 +1,112 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="hero-path" data-src={`${base}/data/hpo-path.json`} hidden>
+  <canvas aria-hidden="true"></canvas>
+  <p class="caption" aria-live="off"></p>
+</div>
+
+<script>
+  import { contour, css, mix, onTheme, rgb, setupCanvas } from "../lib/plot";
+
+  type Data = {
+    grid: number;
+    points: [number, number, number][];
+    iterates: { log10_lam: number; log10_gamma: number; error: number; decision: number[] }[];
+  };
+  const root = document.querySelector<HTMLElement>(".hero-path")!;
+  const canvas = root.querySelector("canvas")!;
+  const caption = root.querySelector<HTMLElement>(".caption")!;
+  const S = 400;
+  const ctx = setupCanvas(canvas, S, S);
+  let data: Data;
+  let k = 0;
+  let timer = 0;
+
+  function draw() {
+    const p = data.iterates[k], n = data.grid;
+    const bg = rgb(css("--surface")), pos = rgb(css("--accent")), neg = rgb(css("--accent-2"));
+    const img = ctx.createImageData(n, n);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const d = p.decision[j * n + i];
+        const c = mix(bg, d > 0 ? pos : neg, (Math.min(Math.abs(d), 1.5) / 1.5) * 0.3);
+        const o = 4 * ((n - 1 - j) * n + i);
+        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+      }
+    }
+    const off = new OffscreenCanvas(n, n);
+    off.getContext("2d")!.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, S, S);
+    ctx.strokeStyle = css("--ink");
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const s = S / (n - 1);
+    for (const [a, b, c, d] of contour((i, j) => p.decision[j * n + i], n, n, 0)) {
+      ctx.moveTo(a * s, S - b * s);
+      ctx.lineTo(c * s, S - d * s);
+    }
+    ctx.stroke();
+    for (const [x, y, c] of data.points) {
+      ctx.fillStyle = c > 0 ? css("--accent") : css("--accent-2");
+      ctx.beginPath();
+      ctx.arc(x * S, (1 - y) * S, 2.6, 0, 7);
+      ctx.fill();
+    }
+    const last = k === data.iterates.length - 1;
+    caption.textContent =
+      `Hyperparameter search on the checkerboard data: evaluation ${k + 1} of ${data.iterates.length}, ` +
+      `CV error ${p.error.toFixed(3)}` + (last ? " — converged." : ".");
+  }
+
+  function start() {
+    if (timer || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    timer = window.setInterval(() => {
+      k = (k + 1) % (data.iterates.length + 3); // dwell on the converged model for three ticks
+      draw_k();
+    }, 800);
+  }
+  function draw_k() {
+    const kk = Math.min(k, data.iterates.length - 1);
+    const old = k;
+    k = kk;
+    draw();
+    k = old;
+  }
+  function stop() {
+    clearInterval(timer);
+    timer = 0;
+  }
+
+  onTheme(() => data && draw_k());
+  fetch(root.dataset.src!)
+    .then((r) => r.json())
+    .then((d: Data) => {
+      data = d;
+      k = matchMedia("(prefers-reduced-motion: reduce)").matches ? d.iterates.length - 1 : 0;
+      draw_k();
+      root.hidden = false;
+      // swap the static figure for the live one
+      document.querySelectorAll(".hero-fig .theme-img").forEach((e) => ((e as HTMLElement).style.display = "none"));
+      document.querySelector(".hero-fig .static-caption")?.setAttribute("hidden", "");
+      const io = new IntersectionObserver(([e]) => (e.isIntersecting ? start() : stop()));
+      io.observe(root);
+    });
+</script>
+
+<style>
+  .hero-path canvas {
+    width: 100%;
+    aspect-ratio: 1;
+    display: block;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+  }
+  .caption {
+    margin: 0.6rem 0 0;
+    font-size: 0.88rem;
+    color: var(--muted);
+    min-height: 2.6em;
+  }
+</style>

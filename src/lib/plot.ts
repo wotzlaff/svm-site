@@ -87,3 +87,21 @@ export function onTheme(f: () => void) {
   window.addEventListener("themechange", f);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", f);
 }
+
+/** Calls `cb(width)` whenever the rendered width of `el` changes (debounced to animation frames). */
+export function observeWidth(el: Element, cb: (width: number) => void) {
+  let last = 0;
+  let raf = 0;
+  const ro = new ResizeObserver(() => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const w = Math.round(el.getBoundingClientRect().width);
+      if (w > 0 && w !== last) {
+        last = w;
+        cb(w);
+      }
+    });
+  });
+  ro.observe(el);
+  return ro;
+}

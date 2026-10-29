@@ -37,7 +37,7 @@
 </div>
 
 <script>
-  import { onTheme } from "../lib/plot";
+  import { observeWidth, onTheme } from "../lib/plot";
 
   type F = (t: number) => number;
   // smoothed maximum m_delta(t) of max(0, t) and its derivatives (Strasdat, Sec. 4.4)
@@ -82,7 +82,8 @@
   const svg = root.querySelector("svg")!;
   const state = { kind: "hinge", degree: "2" };
   const NS = "http://www.w3.org/2000/svg";
-  const W = 560, panels = [
+  let W = 560;
+  const panels = [
     { top: 12, h: 118, label: "loss  φ(t)" },
     { top: 160, h: 118, label: "derivative  φ′(t) = −a   (dual variable)" },
     { top: 308, h: 118, label: "curvature  φ″(t)" },
@@ -99,6 +100,7 @@
   const val = (k: string) => Number(root.querySelector<HTMLInputElement>(`[data-param=${k}]`)!.value);
 
   function draw() {
+    svg.setAttribute("viewBox", `0 0 ${W} 468`);
     const delta = val("delta"), eps = val("eps");
     const hinge = state.kind === "hinge";
     root.querySelector<HTMLElement>("[data-eps-row]")!.hidden = hinge;
@@ -178,6 +180,10 @@
   root.querySelectorAll("[data-param]").forEach((e) => e.addEventListener("input", draw));
   onTheme(draw);
   draw();
+  observeWidth(svg, (w) => {
+    W = Math.max(300, w);
+    draw();
+  });
 </script>
 
 <style is:global>
