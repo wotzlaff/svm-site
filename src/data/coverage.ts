@@ -43,7 +43,7 @@ export const coverage: Group[] = [
         note: "One-vs-rest (with separate hyperparameters per class in OptimizedSVC). The soft-max formulation of the thesis is not implemented." },
       { ref: "5.2", topic: "ν-support vector machines", status: "done",
         note: "1-norm constraint on the dual variables (max_asum), solved by SMO and Newton; also in the hypergradient." },
-      { ref: "5.3", topic: "Subspace SVM", status: "planned", note: "Not implemented." },
+      { ref: "5.3", topic: "Subspace SVM", status: "partial", note: "Low-level: Newton training in the span of m basis points and exact hypergradient (basis argument of cv_error_and_gradient); not in the estimators." },
     ],
   },
   {
