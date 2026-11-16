@@ -103,4 +103,8 @@ export const legacy: Legacy[] = [
     now: "Rebuilt as optimized-svm with tests and CI. Thirteen defects fixed, among them a regression HPO that did not terminate; tag legacy-2022." },
   { name: "hpo4svm (2018/19)", what: "Early OpenML experiments",
     now: "Evaluated for the data and the protocol of Table 10.4.1; not ported." },
+  { name: "optimized-lssvr (Python, 2016–2023)", what: "LS-SVR with optimized hyperparameters (Fischer et al. 2015)",
+    now: "Covered by OptimizedSVR(loss=\"squared\"): same objective and gradient (checked against the old package to 1e-13), plus group-aware CV splitters. Deprecated with 0.0.3 and archived; migration guide in the optimized-svm docs." },
+  { name: "gkm (Python, 2023–2024)", what: "Generalized kernel method: kernel GLMs with deviance losses",
+    now: "Folded into optimized-svm as KernelGLMRegressor / OptimizedKernelGLMRegressor: binomial, negative binomial, Gamma and Tweedie families with log links, offsets/exposure and a hypergradient-tuned NB dispersion. Deprecated with 0.1.2." },
 ];
