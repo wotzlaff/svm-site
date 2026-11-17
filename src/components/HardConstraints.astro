@@ -31,7 +31,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       Every training margin must be at least 1. The hard model minimizes its RKHS norm subject to
       these constraints; a soft model may pay a penalty to violate them.
     </p>
-    <p class="note">These are precomputed fits of <code>optimized-svm</code> (unreleased), with feasibility
+    <p class="note">These are precomputed fits of the hard-constraint models introduced in <code>optimized-svm</code> 0.6.0, with feasibility
       and λ invariance checked by the data generator. For a hard model, changing positive λ rescales
       the dual variables and leaves the prediction unchanged.</p>
     <noscript><p>Enable JavaScript to explore the examples. Conflicting class labels at an identical input are infeasible; regression targets −0.6 and +0.6 need ε ≥ 0.6.</p></noscript>
