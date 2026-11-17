@@ -40,7 +40,7 @@ export const coverage: Group[] = [
       { ref: "4.4", topic: "Smooth approximations of the maximum function", status: "done",
         note: "Degrees 2, 3 and 6 in optimized-svm (Newton and hypergradient); degree 2 is solved by SMO." },
       { ref: "5.1", topic: "Multi-class classification", status: "partial",
-        note: "One-vs-rest (with separate hyperparameters per class in OptimizedSVC). The soft-max formulation of the thesis is not implemented." },
+        note: "Soft-max formulation (Prop. 5.1) as multi_class=\"softmax\" in SmoothSVC/OptimizedSVC: one joint multinomial model with common hyperparameters, Newton training and exact hypergradient (dense systems, for r·n up to a few thousand; unreleased). One-vs-rest with separate hyperparameters per class remains the default. The simplified formulation (Prop. 5.2) is not implemented." },
       { ref: "5.2", topic: "ν-support vector machines", status: "done",
         note: "1-norm constraint on the dual variables (max_asum), solved by SMO and Newton; also in the hypergradient." },
       { ref: "5.3", topic: "Subspace SVM", status: "partial", note: "Experimental: Newton training in the span of m basis points and exact hypergradient (n_basis in the estimators, basis re-selected during the optimization). Speed-up shown for fits with fixed hyperparameters on large regression problems with wide kernels; in complete hyperparameter optimizations no gain without loss of accuracy so far." },
