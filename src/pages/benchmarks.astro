@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import BenchCharts from "../components/BenchCharts.astro";
 import bench from "../../public/data/bench.json";
+import blocks from "../../public/data/block-benchmarks.json";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const description =
@@ -59,6 +60,16 @@ const twoWorst = Math.max(...nwLams.flatMap((l) => nw.n.map((_: number, i: numbe
 const pgdPerStep = pr.s_per_step.pgd as number;
 const lamK = (d: string) => cv.lambda[d];
 const freeRange = (d: string) => range(lamK(d).n_free.filter((_: number, i: number) => lamK(d).lam[i] <= 0.4));
+const blockTime = (v: number | null) => v === null ? "Not converged" : v < 0.001 ? `${(v * 1e6).toFixed(0)} µs` : `${v.toFixed(v < 1 ? 3 : 2)} s`;
+const blockCases = [
+  ["saved_nu_svr", "Saved difficult ν-SVR", "Five samples; ten dual variables"],
+  ["nu_svr_moderate", "ν-SVR, n = 1000", "λ = 0.01; active norm bound"],
+  ["svc", "Ordinary SVC, n = 1000", "λ = 0.01"],
+  ["svr", "Smoothed SVR, n = 1000", "λ = 0.01"],
+] as const;
+const blockSolver = blocks.solver as Record<string, Record<string, { seconds: number | null; steps: number | null }>>;
+const blockHpo = blocks.hpo as Record<string, Record<string, { seconds: number; cv_error: number; evaluations: number }>>;
+const blockUsage = 'solve_regression(x, y, lam=0.01, working_set_size=8)\nOptimizedSVR(smo_options={"working_set_size": 8})';
 ---
 
 <Base title="Benchmarks: what the numbers say" description={description}>
@@ -188,7 +199,7 @@ const freeRange = (d: string) => range(lamK(d).n_free.filter((_: number, i: numb
       <p class="eyebrow">Solver internals</p>
       <h2>Working set selection</h2>
       <p class="lead">
-        Every SMO step picks two variables. Five rules were compared on the checkerboard problem (n = 1000, hinge loss,
+        A classical SMO step picks two variables. Five pair-selection rules were compared on the checkerboard problem (n = 1000, hinge loss,
         Gaussian kernel): the maximal violating pair (MVP, Def. 7.6), its bound-aware variant (baMVP, Def. 7.21), the
         second-order rules that keep the first index of the MVP and choose the partner with the largest predicted decrease,
         ignoring the bounds (MuDP, Def. 7.27, as in LIBSVM) or respecting them (MDP, Def. 7.28), and the pair of largest
@@ -246,6 +257,79 @@ const freeRange = (d: string) => range(lamK(d).n_free.filter((_: number, i: numb
         reference SMO, which reproduces the Rust iterates to better than 10⁻¹⁰ (identical MVP path for {ws.validation.mvp_steps.toLocaleString("en")} steps; MuDP/MDP until ties of about 10⁻¹³ in the gradient pick another pair). Times are not compared:
         step counts do not depend on the machine. The gap here uses the midpoint bias of the thesis (Obs. 7.4).
         Raw data: <code>benchmarks/working_set_study.py</code> in <code>smo-solver</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="block-working-sets">
+    <div class="wrap">
+      <p class="eyebrow">Beyond pairs</p>
+      <h2>Joint working sets: fewer steps can cost more</h2>
+      <p class="lead">
+        The development solver can jointly optimize up to 64 dual variables with
+        <code>working_set_size</code>. Each block solves a local quadratic problem with the box,
+        sum and optional 1-norm constraints together. It can move both regression sign groups at once,
+        instead of alternating small pair steps. The default stays at two variables.
+      </p>
+      <div class="card table-scroll" role="region" aria-label="Block working-set training times" tabindex="0">
+        <table class="search">
+          <caption>Converged training time at the same requested KKT tolerance, r ≤ 10⁻⁶</caption>
+          <thead><tr><th scope="col">Problem</th>{blocks.sizes.map(size => <th scope="col">{size} variables</th>)}</tr></thead>
+          <tbody>
+            {blockCases.map(([key, label, detail]) => (
+              <tr>
+                <th scope="row">{label}<span class="sub">{detail}</span></th>
+                {blocks.sizes.map(size => <td><span class="main">{blockTime(blockSolver[key][size].seconds)}{key === "nu_svr_moderate" && size === 4 ? "†" : ""}</span></td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Minimum of three sequential release-build runs on one shared machine, with one Rayon thread.
+        † The four-variable moderate ν-SVR value is one additional run with a 20 s limit: the three
+        10 s runs stopped just short of the target. The saved case drops from
+        {stepsK(blockSolver.saved_nu_svr[2].steps)} pair steps to {stepsK(blockSolver.saved_nu_svr[4].steps)} four-variable updates. Size 16 covers all ten dual variables there, so its one-step result is
+        a full local solve. On the moderate ν-SVR, sizes 8 and 16 are {(blockSolver.nu_svr_moderate[2].seconds! / blockSolver.nu_svr_moderate[8].seconds!).toFixed(1)}× and {(blockSolver.nu_svr_moderate[2].seconds! / blockSolver.nu_svr_moderate[16].seconds!).toFixed(1)}× faster.
+        On ordinary SVC/SVR, the dense block overhead outweighs the reduced step count.
+      </p>
+      <p>
+        There is a harder case too: ν-SVR with n = 1000 and λ = 10⁻⁴ stopped at the 10 s limit for
+        <strong>every</strong> tested size. Size 16 left a smaller gap, but none reached the target;
+        these censored runs are not counted as successful speed-ups. This is an optional tool for
+        difficult problems, rather than a generally faster replacement for pairs.
+      </p>
+      <h3>Does the gain survive hyperparameter optimization?</h3>
+      <p>
+        Complete fits include three-fold CV, the normal rough SMO stage, Newton refinement, exact
+        hypergradients and the final full-data fit. With n = 180, the active-bound ν-SVR also benefits;
+        ordinary classification is about unchanged. Each optimum was verified with fresh cold CV folds.
+      </p>
+      <div class="card table-scroll" role="region" aria-label="Block working-set HPO times" tabindex="0">
+        <table class="search">
+          <caption>Complete HPO fit time, minimum of two sequential runs; one BLAS/Rayon thread</caption>
+          <thead><tr><th scope="col">Problem</th>{[2, 4, 8].map(size => <th scope="col">{size} variables</th>)}<th scope="col">CV error</th></tr></thead>
+          <tbody>
+            {[["svc", "SVC"], ["nu_svr", "ν-SVR, active norm bound"]].map(([key, label]) => (
+              <tr><th scope="row">{label}</th>{[2, 4, 8].map(size => <td>{blockTime(blockHpo[key][size].seconds)}</td>)}<td>{blockHpo[key][2].cv_error.toFixed(9)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        All optimizations converged and the CV errors agree across block sizes to roundoff.
+        This comparison exposed and corrected an existing SMO–Newton transition bug: a projected
+        warm start could incorrectly mark the norm constraint inactive. Post-Newton activity checks
+        now keep the fold solutions feasible. The pre-fix HPO records are excluded from this table.
+      </p>
+      <pre><code>{blockUsage}</code></pre>
+      <p class="muted">
+        Values 2–64, including odd sizes, are supported; a small problem may use fewer variables.
+        The pair-selection rule still chooses the seed pair. Steps, callback periods and iteration
+        budgets count outer block updates, so compare wall time and final accuracy, not step counts alone.
+        Kernel products, KKT violations, gaps and held-out predictions were recomputed outside timing.
+        Reproduce from <code>benchmarks/block_working_sets.py</code> and <code>benchmarks/block_hpo.py</code>
+        {" "}in <code>smo-solver</code>; copied raw records and build provenance are in this site's <code>data/benchmarks/block*</code>. The page summary is generated by <code>scripts/make_block_benchmark_data.py</code>. Features are prepared for release.
       </p>
     </div>
   </section>
@@ -541,7 +625,7 @@ const freeRange = (d: string) => range(lamK(d).n_free.filter((_: number, i: numb
       <p class="muted">
         Without SMO (right column) Newton starts at zero and needs many steps. Small λ prefers an earlier
         hand-over. Over 40 problems (size, λ, kernel width, loss, smoothing, active ν-bound) a tolerance of 0.3 was
-        best on average, and a budget of five SMO steps per sample removes the worst cases. See{" "}
+        best on average, and a budget of five outer updates per loss term removes the worst cases. See{" "}
         <a href="https://wotzlaff.github.io/optimized-svm/theory/switching/">the study</a> and
         <code>benchmarks/smo_newton_switch.py</code>.
       </p>

@@ -27,6 +27,7 @@ npm run build      # static output in dist/
 | `public/data/{hpo-path,gradient-slice,ard-path}.json` (Explore page; `hpo-path.json` also holds the gradient field) | `python scripts/make_explorer_data.py` (needs `optimized-svm`) |
 | `public/data/hard-constraints.json` (Explore hard/soft comparison, including infeasible data) | `python scripts/make_hard_constraint_data.py` with the development version of `optimized-svm`; verifies feasibility and invariance under positive λ before export |
 | `public/data/bench.json` (Benchmarks page) | `python scripts/make_benchmark_data.py` from the raw results in `data/benchmarks/` (see the docstring of the script for how they are produced) |
+| `public/data/block-benchmarks.json` (joint working sets and verified HPO) | `python scripts/make_block_benchmark_data.py` from copied valid `data/benchmarks/block*.csv`; matching `.txt` files preserve source/build provenance |
 | `public/figures/thesis/*.png` | figures of the dissertation |
 | `src/data/thesis.ts` | chapter outline, BibTeX and Table 10.4.1 |
 
