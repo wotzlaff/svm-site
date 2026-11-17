@@ -20,6 +20,45 @@ const grid = (n: string) => clsMean(n)["grid search (13 x 11)"];
 const grad = (n: string) => clsMean(n)["gradient method"];
 const speedups = bench.versions["1t"].cases.map((c: any) => c.old_s / c.new_s);
 const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n === 5000)!;
+
+const ws = bench.workingsets as any;
+const cv = bench.convergence as any;
+const setKeys = Object.keys(ws.settings);
+const nsteps = (set: string, rule: string, tol = "1e-8") => ws.steps[set][rule].r[tol] as number | null;
+const range = (xs: number[]) => [Math.min(...xs), Math.max(...xs)];
+const fx = (r: number[], d = 0) => (r[0].toFixed(d) === r[1].toFixed(d) ? r[0].toFixed(d) : `${r[0].toFixed(d)}–${r[1].toFixed(d)}`);
+const mvpOver = (rule: string, tol: string) => range(setKeys.map((k) => nsteps(k, "mvp", tol)! / nsteps(k, rule, tol)!));
+const mudMdAll = ["1e-5", "1e-8"].flatMap((t) => setKeys.map((k) => nsteps(k, "mud", t)! / nsteps(k, "md", t)!));
+const mudFirst = mudMdAll.filter((v) => v < 1).length;
+const tmdSaving = ["1e-3", "1e-5"].flatMap((t) => setKeys.filter((k) => nsteps(k, "tmd", t)).map((k) => nsteps(k, "md", t)! / nsteps(k, "tmd", t)!));
+const stepsK = (v: number | null) => (v == null ? "–" : v.toLocaleString("en"));
+const fac = cv.factor.measures;
+const law = (m: any, p: number) => `${m.a.toPrecision(3)} λ^${m.s.toFixed(3)}`;
+const sizeLams = Object.keys(cv.size.lam);
+const sizeRange = (key: string) => range(sizeLams.map((l) => cv.size.lam[l][key] as number));
+const maxN = cv.size.lam[sizeLams[0]].n.length - 1;
+const maxTime = Math.max(...sizeLams.map((l) => cv.size.lam[l].seconds[maxN] as number));
+const pr = bench.primal as any;
+const pst = pr.stats;
+const nw = bench.newton as any;
+const nwLams = Object.keys(nw.lam).reverse(); // 0.1 ... 1e-4
+const nwLast = nw.n.length - 1;
+const nwPrev = nw.n.indexOf(20000);
+const lamLabel = (l: string) => `10${String(Math.round(Math.log10(Number(l)))).replace("-", "⁻").replace(/\d/g, (d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)])}`;
+const sec = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(1) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3));
+const sci = (v: number, d = 1) => v.toExponential(d).replace(/e([+-])(\d+)/, (_: string, sg: string, e: string) => ` × 10${sg === "-" ? "⁻" : ""}${[...String(Number(e))].map((c) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(c)]).join("")}`);
+const nwAll = (key: string, i: number) => nwLams.map((l) => nw.lam[l][key][i] as number);
+const nwExp = (key: string) => range(nwLams.map((l) => nw.lam[l][key] as number));
+const nwStepRange = (l: string) => range(nw.lam[l].newton_steps as number[]);
+const smoAlwaysFaster = nwLams.every((l) => nw.n.every((_: number, i: number) => nw.lam[l].smo_t[i] < nw.lam[l].newton_t[i]));
+const jump = range(nwLams.map((l) => nw.lam[l].newton_t[nwLast] / nw.lam[l].newton_t[nwPrev]));
+const twoMax = Math.max(...nwAll("two_t", nwLast));
+const outlierI = nwPrev;
+const twoWins = nwLams.flatMap((l) => nw.n.map((_: number, i: number) => nw.lam[l].two_t[i] < nw.lam[l].smo_t[i])).filter(Boolean).length;
+const twoWorst = Math.max(...nwLams.flatMap((l) => nw.n.map((_: number, i: number) => nw.lam[l].two_t[i] / nw.lam[l].smo_t[i])));
+const pgdPerStep = pr.s_per_step.pgd as number;
+const lamK = (d: string) => cv.lambda[d];
+const freeRange = (d: string) => range(lamK(d).n_free.filter((_: number, i: number) => lamK(d).lam[i] <= 0.4));
 ---
 
 <Base title="Benchmarks: what the numbers say" description={description}>
@@ -140,6 +179,255 @@ const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n =
         a much looser guide (the spread is 2.7 decades against 0.6): a gap threshold that guarantees an accuracy of
         10⁻³ is 2·10⁻⁵. The dual objective converges quadratically and says even less about the predictions.
         Raw data and the script: <code>benchmarks/stopping_study.py</code> in <code>smo-solver</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="workingsets">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>Working set selection</h2>
+      <p class="lead">
+        Every SMO step picks two variables. Five rules were compared on the checkerboard problem (n = 1000, hinge loss,
+        Gaussian kernel): the maximal violating pair (MVP, Def. 7.6), its bound-aware variant (baMVP, Def. 7.21), the
+        second-order rules that keep the first index of the MVP and choose the partner with the largest predicted decrease,
+        ignoring the bounds (MuDP, Def. 7.27, as in LIBSVM) or respecting them (MDP, Def. 7.28), and the pair of largest
+        decrease over all pairs (tMDP, Def. 7.29, O(n²) per step). The curves show the best value reached
+        so far; the base setting is λ = 10⁻³, γ = 30 (Sec. 10.2.1–10.2.3).
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="ws-traj" data-measure="r" viewBox="0 0 400 280" role="img" aria-label="Running minimum of the violation r over the SMO steps for five working set rules"></svg>
+          <figcaption>Violation r (the stopping measure)</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="ws-traj" data-measure="gap" viewBox="0 0 400 280" role="img" aria-label="Running minimum of the duality gap over the SMO steps for five working set rules"></svg>
+          <figcaption>Duality gap</figcaption>
+        </figure>
+      </div>
+      <div class="card table-scroll">
+        <table class="search">
+          <thead>
+            <tr>
+              <th>rule</th>
+              {setKeys.map((k) => <th>{ws.settings[k]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {[["mvp", "MVP"], ["bamvp", "baMVP"], ["mud", "MuDP"], ["md", "MDP"], ["tmd", "tMDP"]].map(([rule, name]) => (
+              <tr>
+                <td>{name}</td>
+                {setKeys.map((k) => {
+                  const best = Math.min(...["mvp", "bamvp", "mud", "md"].map((q) => nsteps(k, q)!));
+                  return (
+                    <td class={nsteps(k, rule) === best ? "best" : ""}>
+                      <span class="main">{stepsK(nsteps(k, rule))}</span>
+                      <span class="sub">r ≤ 10⁻⁵: {stepsK(nsteps(k, rule, "1e-5"))}</span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        SMO steps until r ≤ 10⁻⁸ (large) and r ≤ 10⁻⁵ (small); fewest steps of the four complete runs in bold. The tMDP runs
+        stopped at r ≤ 10⁻⁶ or after 20 000 steps (dash: not reached). The second-order rules MuDP and MDP need {fx(mvpOver("mud", "1e-8"))}× (MuDP) and {fx(mvpOver("md", "1e-8"))}× (MDP) fewer steps than MVP for r ≤ 10⁻⁸ and {fx(mvpOver("mud", "1e-5"))}× / {fx(mvpOver("md", "1e-5"))}× for r ≤ 10⁻⁵, at a few microseconds
+        per step ({ws.us_per_step.mvp_rust.toFixed(1)} µs for MVP, {ws.us_per_step.md_rust.toFixed(1)} µs for MDP in the base setting; indicative,
+        the machine was loaded). That is why <code>md</code> is the solver's default. MDP and MuDP are practically equal:
+        the step counts differ by at most {((Math.max(...mudMdAll.map((v) => Math.max(v, 1 / v))) - 1) * 100).toFixed(0)} %, and neither is
+        consistently ahead ({mudFirst} of {mudMdAll.length} comparisons favour MuDP), unlike the single example in the thesis.
+      </p>
+      <p class="muted">
+        tMDP saves only {fx(range(tmdSaving), 1)}× steps compared with MDP, but a step costs {Math.round(ws.us_per_step.tmd_numpy / ws.us_per_step.md_numpy)} times as much in the NumPy reference, so it is unusable.
+        baMVP behaves like MVP in the gap and in r◇/λ (the same step counts to within about {((Math.max(...setKeys.map((k) => Math.max(nsteps(k, "bamvp")! / nsteps(k, "mvp")!, nsteps(k, "mvp")! / nsteps(k, "bamvp")!))) - 1) * 100).toFixed(0)} % at r ≤ 10⁻⁸),
+        but the plain r stays large for a long time: r ≤ 10⁻³ takes {stepsK(ws.steps.base.bamvp.r["1e-3"])} steps against {stepsK(ws.steps.base.mvp.r["1e-3"])} for MVP in the base setting. For MVP, MuDP and MDP the two measures coincide: r◇/λ = r (median ratio 1.00). baMVP and tMDP ran in a NumPy
+        reference SMO, which reproduces the Rust iterates to better than 10⁻¹⁰ (identical MVP path for {ws.validation.mvp_steps.toLocaleString("en")} steps; MuDP/MDP until ties of about 10⁻¹³ in the gradient pick another pair). Times are not compared:
+        step counts do not depend on the machine. The gap here uses the midpoint bias of the thesis (Obs. 7.4).
+        Raw data: <code>benchmarks/working_set_study.py</code> in <code>smo-solver</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="convergence">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>How SMO converges</h2>
+      <p class="lead">
+        Along one MDP run on the base problem (no shrinking), the violation <i>r</i> is compared with four other measures
+        (Sec. 10.2.4, Fig. 10.2.6). The gap, the step length τ̃ and the distance D<sub>k</sub> to the solution are proportional to <i>r</i>; the decrease Δψ of the dual objective is proportional to <i>r</i>². Each point is one iterate.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-rel" data-set="hinge" viewBox="0 0 400 300" role="img" aria-label="Duality gap, step length, distance to the solution and objective decrease against the violation r, hinge loss"></svg>
+          <figcaption>Hinge loss, λ = 10⁻³, γ = 30</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-rel" data-set="smooth" viewBox="0 0 400 300" role="img" aria-label="Duality gap, step length, distance to the solution and objective decrease against the violation r, smoothed hinge loss"></svg>
+          <figcaption>Smoothed hinge, δ = 1/4, λ = 10⁻³</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Dotted: c·r<sup>p</sup> with c the geometric mean of v / r<sup>p</sup> for 10⁻⁹ ≤ r ≤ 10⁻³; the slope in the legend is the fitted
+        local exponent. For the smoothed hinge (Fig. 10.2.8) the gap becomes quadratic in <i>r</i> (slope {cv.smooth["0.001"].fit.gap.slope.toFixed(2)}), while τ̃ and D<sub>k</sub> stay
+        linear (slopes {cv.smooth["0.001"].fit.tau.slope.toFixed(2)} and {cv.smooth["0.001"].fit.D.slope.toFixed(2)}); the same holds for λ = 10⁻² and 10⁻¹.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="conv-factor" viewBox="0 0 560 330" role="img" aria-label="Proportionality factors of gap, step length, objective decrease and r tilde over lambda, with fitted and thesis power laws"></svg>
+        <figcaption>
+          The factor c(λ) in v ≈ c(λ)·r<sup>p</sup> (p = 1 for gap, τ̃ and r̃, p = 2 for Δψ) for nine values of λ (Fig. 10.2.7).
+          Fitted here: gap ≈ {law(fac.gap, 1)}·r, τ̃ ≈ {law(fac.tau, 1)}·r, Δψ ≈ {law(fac.dpsi, 2)}·r², r̃ ≈ {law(fac.rt, 1)}·r.
+          The thesis found gap ≈ 5.770 λ<sup>−0.04</sup> r, τ̃ ≈ 1.648 λ<sup>0.958</sup> r, Δψ ≈ 0.427 λ<sup>0.989</sup> r², r̃ ≈ 0.707 λ<sup>0.014</sup> r.
+          The exponents agree: the gap and r̃ hardly depend on λ, τ̃ and Δψ are proportional to λ. The prefactors differ somewhat; r ≈ {cv.factor.r_over_gap.toFixed(2)}·gap
+          here against 0.173 in the thesis (here the gap is minimised over the bias, in the working-set study above it uses the midpoint bias, so
+          the constants differ slightly between the two sections).
+        </figcaption>
+      </figure>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-lambda" data-delta="0" viewBox="0 0 400 280" role="img" aria-label="Support vectors and free variables over lambda, hinge loss"></svg>
+          <figcaption>Hinge loss</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-lambda" data-delta="0.25" viewBox="0 0 400 280" role="img" aria-label="Support vectors and free variables over lambda, smoothed hinge loss"></svg>
+          <figcaption>Smoothed hinge, δ = 1/4</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Support vectors and free variables (strictly between the bounds) at the solution, n = 1000 (Fig. 10.2.9). The number of support vectors grows
+        with λ. For the hinge loss the free variables stay almost constant ({freeRange("0").map((v) => v.toFixed(0)).join("–")} for λ ≤ 0.3, the rest sits at the upper bound); for the smoothed
+        hinge they grow ({lamK("0.25").n_free[0]} at λ = 10⁻⁵ to {lamK("0.25").n_free[lamK("0.25").n_free.length - 1]} at λ = 1).
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-size" data-metric="steps" viewBox="0 0 400 280" role="img" aria-label="SMO steps over the number of samples for four values of lambda"></svg>
+          <figcaption>Steps to r ≤ 10⁻⁸</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="conv-size" data-metric="seconds" viewBox="0 0 400 280" role="img" aria-label="Solver time over the number of samples for four values of lambda"></svg>
+          <figcaption>Time with shrinking (minimum of 3 runs)</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Size dependence for n = 1000 … 50 000 (Fig. 10.2.12), tolerance 10⁻⁸, default shrinking; the exponent of a fitted power law
+        n<sup>e</sup> is in the legend. Time grows like n<sup>{fx(sizeRange("exp_time"), 1)}</sup> (thesis: n<sup>1.6</sup>), the number of steps like
+        n<sup>{fx(sizeRange("exp_steps"), 1)}</sup> (thesis: n<sup>0.6</sup>), and the number of free variables hardly at all (n<sup>{fx(sizeRange("exp_free"), 1)}</sup>).
+        There is one problem per n, so the step counts are noisy and not monotone. Even {cv.size.lam[sizeLams[0]].n[maxN].toLocaleString("en")} samples take at most {maxTime.toFixed(1)} s. Times come from a loaded machine and are indicative only.
+        Raw data and script: <code>benchmarks/convergence_study.py</code> in <code>smo-solver</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="primal">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>First-order methods for the primal problem</h2>
+      <p class="lead">
+        Chapter 8 starts with gradient descent (Alg. 8.2.1) and preconditioned gradient descent (Alg. 8.3.1) on the primal problem in
+        z = (α, b). Sec. 10.3.1 shows how slowly they converge. The study was repeated on the checkerboard problem (n = 1000, γ = 30,
+        λ = 10⁻³) with the smoothed hinge loss δ = 1/4, the line search of the thesis (η₀ = λ, η = 1/10, σ = 1/10) and z⁰ = 0. The preconditioner is W = diag(I, λ⁻²),
+        the second variant uses W = I. These methods exist only in the benchmark script; the library does not contain them.
+        The reference solution z* comes from a Newton run, SMO is the dual solver at tolerances from 1 down to 10⁻⁸.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="primal-dist" viewBox="0 0 560 330" role="img" aria-label="Distance to the solution over the iterations for gradient descent, preconditioned gradient descent, preconditioned gradient descent without the bias scaling and SMO"></svg>
+        <figcaption>Distance ‖z − z*‖ over the iterations (SMO: over its steps, one marker per tolerance)</figcaption>
+      </figure>
+      <p class="muted">
+        The first steps are alike, then preconditioning wins by orders of magnitude. Plain gradient descent hardly moves in {pst.gd.steps.toLocaleString("en")} steps:
+        the distance stays at {pst.gd.dist_final.toFixed(1)} (start {pst.gd.dist_start.toFixed(1)}) and the bias does not move at all ({pst.gd.dist_b_start.toFixed(3)} → {pst.gd.dist_b_final.toFixed(3)}), because the step size
+        (median {sci(pst.gd.tau_median, 0)}) is set by the stiff α block. The preconditioned method stops after {pst.pgd.steps.toLocaleString("en")} steps at distance {sci(pst.pgd.dist_final)}, when no numerical
+        descent is possible any more (the thesis stopped for the same reason after 282 527 steps). With W = I the bias scaling is missing and the method stays at distance {pst.pgd_w1.dist_final.toFixed(2)} after {pst.pgd_w1.steps.toLocaleString("en")} steps.
+        SMO reaches distance 10⁻³ after {pr["smo_1e-3"].steps.toLocaleString("en")} steps in {pr["smo_1e-3"].time.toFixed(2)} s, the preconditioned method after{" "}
+        {pst.pgd.first_dist_3_step.toLocaleString("en")} steps in {pst.pgd.first_dist_3_time.toFixed(0)} s. These wall times come from a loaded machine; a step costs{" "}
+        {(pgdPerStep * 1000).toFixed(2)} ms when measured alone, which still gives about {(pst.pgd.first_dist_3_step * pgdPerStep).toFixed(0)} s, so the ratio is indicative only. SMO continues to {sci(pr.smo[pr.smo.length - 1].dist)}{" "}
+        in {pr.smo[pr.smo.length - 1].steps.toLocaleString("en")} steps ({pr.smo[pr.smo.length - 1].time.toFixed(2)} s); none of the primal methods gets there.
+      </p>
+      <div class="grid grid-2">
+        <figure class="card">
+          <svg class="plot bench" data-chart="primal-bound" viewBox="0 0 400 300" role="img" aria-label="Distance to the solution, objective gap and gradient norm against the optimality residual F for preconditioned gradient descent"></svg>
+          <figcaption>Preconditioned GD: measures against ‖F(z)‖</figcaption>
+        </figure>
+        <figure class="card">
+          <svg class="plot bench" data-chart="primal-parts" viewBox="0 0 400 300" role="img" aria-label="Distance of the dual variables and of the bias to the solution over the iterations, with and without the bias scaling"></svg>
+          <figcaption>Error of α and of b, with and without the scaling λ⁻²</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Error bound (Sec. 10.3.2, Fig. 10.3.2), measured where ‖F‖ &lt; 10⁻² and ψ − ψ* &gt; 10⁻¹¹ ({pst.pgd.bound_rows} records of the preconditioned run). The residual F of the optimality
+        system (6.5.1) bounds the error: ‖F(z)‖ ≈ {pst.pgd.F_dist_median.toFixed(3)}·‖z − z*‖ (between {pst.pgd.F_dist_min.toFixed(3)} and {pst.pgd.F_dist_max.toFixed(3)}), and ψ − ψ* grows like ‖F‖<sup>{pst.pgd.slope_gap.toFixed(2)}</sup>.
+        The gradient norm is a poor indicator: it fluctuates between {pst.pgd.grad_dist_min.toFixed(1)} and {pst.pgd.grad_dist_max.toFixed(0)} times the distance. With the scaling the errors of α and of b decrease together
+        (|b − b*| / ‖α − α*‖ between {pst.pgd.db_da_min.toFixed(2)} and {pst.pgd.db_da_max.toFixed(2)}); with W = I the bias stays near its start ({pst.pgd_w1.dist_b_final.toFixed(3)} against {pst.pgd_w1.dist_b_start.toFixed(3)}) and dominates the error
+        ({pst.pgd_w1.dist_final.toFixed(3)} against {pst.pgd_w1.dist_alpha_final.toFixed(4)} for α), which supports the λ⁻² scaling. Counts of steps and the distance are independent of the machine. Raw data and script:
+        <code>benchmarks/primal_first_order.py</code> in <code>optimized-svm</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="newton">
+    <div class="wrap">
+      <p class="eyebrow">Solver internals</p>
+      <h2>Newton's method versus SMO</h2>
+      <p class="lead">
+        Newton's method for the primal problem (Sec. 8.4) was started from zero on the same checkerboard problem for n = 100 … 40 000, with the smoothed hinge loss δ = 1/4, γ = 30 and four values of λ
+        (Sec. 10.3.3, Fig. 10.3.3, 10.3.4). It is compared with SMO until r ≤ 10⁻⁸ and with the default two-stage <code>train</code> (rough SMO, then Newton from that start). Newton and the two-stage method use a precomputed kernel matrix,
+        which is not included in their times; its cost is the dotted line. SMO computes kernel rows on demand. Every time is the minimum of {nw.reps} runs.
+      </p>
+      <figure class="card">
+        <svg class="plot bench" data-chart="newton-steps" viewBox="0 0 560 300" role="img" aria-label="Newton iterations over the number of samples for four values of lambda"></svg>
+        <figcaption>Newton iterations from zero over the number of samples</figcaption>
+      </figure>
+      <p class="muted">
+        The number of iterations does not depend on n: {nwStepRange("0.1").join("–")} for λ = 10⁻¹ up to {nwStepRange("0.0001").join("–")} for λ = 10⁻⁴. Newton's method never failed to converge from zero.
+      </p>
+      <div class="grid grid-2">
+        {nwLams.map((l) => (
+          <figure class="card">
+            <svg class="plot bench" data-chart="newton-time" data-lam={l} viewBox="0 0 400 290" role="img" aria-label={`Time of Newton's method, SMO and the two-stage training over the number of samples, lambda = ${l}`}></svg>
+            <figcaption>λ = {lamLabel(l)}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <div class="card table-scroll">
+        <table class="search">
+          <thead>
+            <tr>
+              <th>λ</th>
+              <th>Newton from 0: iterations</th>
+              <th>Newton from 0</th>
+              <th>SMO to 10⁻⁸</th>
+              <th>SMO + Newton</th>
+            </tr>
+          </thead>
+          <tbody>
+            {nwLams.map((l) => {
+              const d = nw.lam[l];
+              const best = Math.min(d.newton_t[nwLast], d.smo_t[nwLast], d.two_t[nwLast]);
+              const cls = (v: number) => (v === best ? "best" : "");
+              return (
+                <tr>
+                  <td>{lamLabel(l)}</td>
+                  <td><span class="main">{d.newton_steps[nwLast]}</span></td>
+                  <td class={cls(d.newton_t[nwLast])}><span class="main">{sec(d.newton_t[nwLast])} s</span></td>
+                  <td class={cls(d.smo_t[nwLast])}><span class="main">{sec(d.smo_t[nwLast])} s</span></td>
+                  <td class={cls(d.two_t[nwLast])}><span class="main">{sec(d.two_t[nwLast])} s</span><span class="sub">{sec(d.two_smo_t[nwLast])} s SMO + {sec(d.two_newton_t[nwLast])} s Newton</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Time for n = {nw.n[nwLast].toLocaleString("en")}, fastest in bold (the kernel matrix, not included, takes {nw.kernel[nwLast].toFixed(1)} s). Newton's time grows like n<sup>{fx(nwExp("exp_newton"), 1)}</sup>{" "}
+        (fit for n ≥ 1000), quadratic as in the thesis. SMO grows like n<sup>{fx(nwExp("exp_smo"), 1)}</sup> and is faster than Newton from zero{" "}
+        {smoAlwaysFaster ? "at every size and λ measured here" : "in most cases"}: {sec(Math.min(...nwAll("smo_t", nwLast)))}–{sec(Math.max(...nwAll("smo_t", nwLast)))} s against {sec(Math.min(...nwAll("newton_t", nwLast)))}–{sec(Math.max(...nwAll("newton_t", nwLast)))} s
+        for n = {nw.n[nwLast].toLocaleString("en")}. This differs from the thesis, where Newton's method was faster for medium sizes; the SMO of the thesis was a Nim prototype, the one here is the Rust solver with shrinking.
+        From n = {nw.n[nwPrev].toLocaleString("en")} to {nw.n[nwLast].toLocaleString("en")} Newton's time grows by a factor {fx(jump, 0)}, more than the factor 4 that n² would give.
+        The default two-stage training takes at most {twoMax.toFixed(1)} s for n = {nw.n[nwLast].toLocaleString("en")} ({fx(range(nwLams.map((l) => nw.lam[l].newton_t[nwLast] / nw.lam[l].two_t[nwLast])), 0)}× faster than Newton from zero) and ends with the exact Newton solution, whereas SMO stops at r ≤ 10⁻⁸.
+        Compared with SMO alone it is faster in {twoWins} of the {nwLams.length * nw.n.length} cases and at most {twoWorst.toFixed(1)} times slower, so the extra accuracy costs little.
+        Single machine under other load (about 8 of 12 cores busy), so times are indicative. The isolated peak at λ = 10⁻², n = {nw.n[nwPrev].toLocaleString("en")} (SMO {nw.lam["0.01"].smo_t[outlierI].toFixed(1)} s, two-stage {nw.lam["0.01"].two_t[outlierI].toFixed(1)} s)
+        is load noise. Raw data and script: <code>benchmarks/newton_vs_smo.py</code> in <code>optimized-svm</code>.
       </p>
     </div>
   </section>
@@ -266,13 +554,18 @@ const libsvmReg = bench.libsvm.find((r: any) => r.task === "regression" && r.n =
       <h2>Run it yourself</h2>
       <pre><code># smo-solver
 python benchmarks/bench_vs_libsvm.py --sizes 1000 2000 5000
+python benchmarks/working_set_study.py run             # Sec. 10.2.1-10.2.3
+python benchmarks/convergence_study.py relations | gzip > convergence_relations.csv.gz   # also: factor, smooth; lambda, size as .csv
 
 # optimized-svm
 python benchmarks/hpo_vs_search.py --seeds 3 &gt; hpo_vs_search.json
 python benchmarks/hpo_timing.py &gt; timing.json          # once per release, once per BLAS setting
 python benchmarks/smo_newton_switch.py --out switch.csv
+python benchmarks/primal_first_order.py run --aux --methods ""   # then --methods gd / pgd / pgd_w1 (about 20 min each)
+python benchmarks/newton_vs_smo.py run --reps 3 > benchmarks/results/newton_vs_smo.csv
 
-# this site (raw files in data/benchmarks/)
+# this site (raw files in data/benchmarks/; the large smo-solver results are thinned first)
+python scripts/make_benchmark_data.py --thin ../smo-solver/benchmarks/results ../optimized-svm/benchmarks/results
 python scripts/make_benchmark_data.py</code></pre>
     </div>
   </section>
@@ -293,6 +586,9 @@ python scripts/make_benchmark_data.py</code></pre>
     max-width: 78ch;
   }
   .wrap > figure.card + figure.card {
+    margin-top: 1.25rem;
+  }
+  .grid:not(.scatters) + .card {
     margin-top: 1.25rem;
   }
   .scatters {

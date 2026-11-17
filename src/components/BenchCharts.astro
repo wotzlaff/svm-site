@@ -5,6 +5,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <script>
   import { groupedBars, heatmap, loglog, scatter, type ScatterPoint } from "../lib/charts";
+  import { el, reset, SERIES } from "../lib/charts";
   import { observeWidth, onTheme } from "../lib/plot";
 
   const src = document.querySelector<HTMLElement>("[data-bench-src]")!.dataset.benchSrc!;
@@ -27,6 +28,141 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     "random search (30)": "random",
     "successive halving": "halving",
   };
+
+
+  // ---- line / dot charts on linear or logarithmic axes (Sec. 10.2 studies) ----
+  type Ser = {
+    name: string;
+    cls: string; // "s0" ... "s3", or "ink" for neutral legend-only entries
+    pts: [number, number][];
+    kind: "dots" | "line" | "markers" | "both"; // markers + line = "both"
+    dash?: string;
+    legend?: boolean;
+  };
+  type XYSpec = {
+    xLabel: string;
+    yLabel: string;
+    xlog?: boolean;
+    ylog?: boolean;
+    series: Ser[];
+    yZero?: boolean; // linear y axis starts at 0
+  };
+
+  function niceTicks(lo: number, hi: number, count = 5) {
+    const raw = (hi - lo) / count;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 5, 10].map((m) => m * mag).find((v) => v >= raw)!;
+    const out: number[] = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+    return { ticks: out, top: Math.ceil(hi / step) * step };
+  }
+
+  function xyplot(svg: SVGSVGElement, W: number, spec: XYSpec) {
+    const entries = spec.series.filter((s) => s.legend !== false);
+    // legend layout: wrap rows
+    const avail = W - 70;
+    let rows = 1, cx = 0;
+    for (const e of entries) {
+      const w = 34 + e.name.length * 6.9;
+      if (cx + w > avail && cx > 0) { rows++; cx = 0; }
+      cx += w;
+    }
+    const M = { l: 58, r: 14, t: 12 + 18 * rows, b: 42 };
+    const H = Math.round(Math.max(250, Math.min(330, W * 0.74))) + 18 * (rows - 1);
+    reset(svg, W, H);
+    cx = 0;
+    let cy = 14;
+    for (const e of entries) {
+      const w = 34 + e.name.length * 6.9;
+      if (cx + w > avail && cx > 0) { cx = 0; cy += 18; }
+      const x0 = M.l + cx;
+      if (e.kind === "dots" || e.kind === "markers") {
+        svg.append(el("circle", { cx: x0 + 7, cy: cy - 4, r: 3.5, class: `fill ${e.cls}` }));
+      } else {
+        const a: Record<string, string | number> = { x1: x0, x2: x0 + 15, y1: cy - 4, y2: cy - 4, class: `ln stk ${e.cls}` };
+        if (e.dash) a["stroke-dasharray"] = e.dash;
+        svg.append(el("line", a));
+        if (e.kind === "both") svg.append(el("circle", { cx: x0 + 7.5, cy: cy - 4, r: 3, class: `fill ${e.cls}` }));
+      }
+      svg.append(el("text", { x: x0 + 20, y: cy, class: "lbl" }, e.name));
+      cx += w;
+    }
+    // the axis range follows the data; reference lines drawn next to them are clipped
+    const ranged = spec.series.some((s) => s.kind !== "line") ? spec.series.filter((s) => s.kind !== "line") : spec.series;
+    const all = ranged.flatMap((s) => s.pts);
+    const xs = all.map((p) => (spec.xlog ? Math.log10(p[0]) : p[0])), ys = all.map((p) => (spec.ylog ?? true ? Math.log10(p[1]) : p[1]));
+    const ylog = spec.ylog ?? true;
+    const padX = spec.xlog ? 0.15 : 0, padY = ylog ? 0.15 : 0;
+    const xlo = Math.min(...xs) - padX;
+    const xhi = Math.max(...xs) + padX;
+    let ylo = ylog ? Math.min(...ys) - padY : spec.yZero ? 0 : Math.min(...ys);
+    let yhi = ylog ? Math.max(...ys) + padY : Math.max(...ys);
+    let yTicks: number[] = [];
+    if (!ylog) {
+      const nt = niceTicks(ylo, yhi, 5);
+      yTicks = nt.ticks;
+      yhi = nt.top;
+    }
+    const px = (v: number) => M.l + (((spec.xlog ? Math.log10(v) : v) - xlo) / (xhi - xlo)) * (W - M.l - M.r);
+    const py = (v: number) => H - M.b - (((ylog ? Math.log10(v) : v) - ylo) / (yhi - ylo)) * (H - M.t - M.b);
+    const strideFor = (lo: number, hi: number, px_: number) => Math.max(1, Math.ceil((hi - lo) / Math.max(3, Math.floor(px_ / 44))));
+    // x axis
+    if (spec.xlog) {
+      const st = strideFor(xlo, xhi, W - M.l - M.r);
+      for (let t = Math.ceil(xlo); t <= xhi; t++) {
+        const x = M.l + ((t - xlo) / (xhi - xlo)) * (W - M.l - M.r);
+        svg.append(el("line", { x1: x, x2: x, y1: M.t, y2: H - M.b, class: "grid" }));
+        if ((t - Math.ceil(xlo)) % st === 0) svg.append(el("text", { x, y: H - M.b + 14, class: "tick", "text-anchor": "middle" }, `1e${t}`));
+      }
+    } else {
+      const nt = niceTicks(xlo, xhi, Math.max(3, Math.floor((W - M.l - M.r) / 70)));
+      for (const t of nt.ticks) {
+        svg.append(el("line", { x1: px(t), x2: px(t), y1: M.t, y2: H - M.b, class: "grid" }));
+        svg.append(el("text", { x: px(t), y: H - M.b + 14, class: "tick", "text-anchor": "middle" }, t >= 1000 ? `${t / 1000}k` : String(t)));
+      }
+    }
+    // y axis
+    if (ylog) {
+      const st = strideFor(ylo, yhi, H - M.t - M.b);
+      for (let t = Math.ceil(ylo); t <= yhi; t++) {
+        const y = H - M.b - ((t - ylo) / (yhi - ylo)) * (H - M.t - M.b);
+        svg.append(el("line", { x1: M.l, x2: W - M.r, y1: y, y2: y, class: "grid" }));
+        if ((t - Math.ceil(ylo)) % st === 0) svg.append(el("text", { x: M.l - 6, y: y + 3, class: "tick", "text-anchor": "end" }, `1e${t}`));
+      }
+    } else {
+      for (const t of yTicks) {
+        svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(t), y2: py(t), class: "grid" }));
+        svg.append(el("text", { x: M.l - 6, y: py(t) + 3, class: "tick", "text-anchor": "end" }, String(t)));
+      }
+    }
+    svg.append(el("text", { x: M.l + (W - M.l - M.r) / 2, y: H - 5, class: "lbl", "text-anchor": "middle" }, spec.xLabel));
+    const my = M.t + (H - M.t - M.b) / 2;
+    svg.append(el("text", { x: 12, y: my, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 12 ${my})` }, spec.yLabel));
+    const clipId = `clip-${Math.random().toString(36).slice(2, 8)}`;
+    const clip = el("clipPath", { id: clipId });
+    clip.append(el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b }));
+    svg.append(clip);
+    const plot = el("g", { "clip-path": `url(#${clipId})` });
+    svg.append(plot);
+    for (const s of spec.series) {
+      if (!s.pts.length) continue;
+      if (s.kind === "dots") {
+        for (const [x, y] of s.pts) plot.append(el("circle", { cx: px(x), cy: py(y), r: 2.2, class: `fill ${s.cls}`, opacity: 0.55 }));
+        continue;
+      }
+      if (s.kind === "line" || s.kind === "both") {
+        const a: Record<string, string | number> = { d: s.pts.map((p, i) => `${i ? "L" : "M"}${px(p[0]).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" "), class: `ln stk ${s.cls}` };
+        if (s.dash) a["stroke-dasharray"] = s.dash;
+        plot.append(el("path", a));
+      }
+      if (s.kind === "markers" || s.kind === "both") {
+        for (const [x, y] of s.pts) plot.append(el("circle", { cx: px(x), cy: py(y), r: 3.4, class: `fill ${s.cls}`, stroke: "var(--surface)", "stroke-width": 1 }));
+      }
+    }
+  }
+
+  const geom = (lo: number, hi: number, n = 30): number[] => Array.from({ length: n }, (_, i) => lo * (hi / lo) ** (i / (n - 1)));
+  const SER = SERIES;
 
   function render(svg: SVGSVGElement) {
     const W = Math.max(300, widths.get(svg) ?? Math.round(svg.getBoundingClientRect().width));
@@ -111,6 +247,122 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         rowLabel: "",
         colLabel: "SMO tolerance before the Newton refinement",
       });
+    } else if (kind === "ws-traj") {
+      const m = svg.dataset.measure as "r" | "gap";
+      const style: Record<string, [string, string, string?]> = {
+        mvp: ["MVP", "s3"], bamvp: ["baMVP", "s3", "6 3"], mud: ["MuDP", "s0"], md: ["MDP", "s1", "2 3"], tmd: ["tMDP", "s2"],
+      };
+      xyplot(svg, W, {
+        xLabel: "SMO step k",
+        yLabel: m === "r" ? "running minimum of r" : "running minimum of the duality gap",
+        xlog: true,
+        series: Object.entries(style).map(([rule, [name, cls, dash]]) => {
+          const t = data.workingsets.traj[rule];
+          return { name, cls, dash, kind: "line", pts: t.step.map((k: number, i: number) => [k, t[m][i]] as [number, number]).filter((p: number[]) => p[0] >= 1 && p[1] > 0) };
+        }),
+      });
+    } else if (kind === "conv-rel") {
+      const set = svg.dataset.set === "smooth" ? data.convergence.smooth["0.001"] : data.convergence.hinge;
+      const defs: [string, string, string, number][] = [["gap", "gap", "s0", 0], ["tau", "τ̃", "s1", 0], ["D", "D_k", "s2", 0], ["dpsi", "Δψ", "s3", 0]];
+      const series: Ser[] = defs.map(([k, name, cls]) => ({
+        name: `${name} (slope ${set.fit[k].slope.toFixed(2)})`, cls, kind: "dots",
+        pts: set[k].r.map((r: number, i: number) => [r, set[k].v[i]] as [number, number]),
+      }));
+      const rr = geom(1e-9, 1e-1, 2);
+      for (const [k, , cls] of defs) {
+        const p = Math.round(set.fit[k].slope);
+        series.push({ name: "fit", cls, kind: "line", dash: "1 3", legend: false, pts: rr.map((r) => [r, set.fit[k].c * r ** p] as [number, number]) });
+      }
+      xyplot(svg, W, { xLabel: "violation r(α^k)", yLabel: "measure", xlog: true, series });
+    } else if (kind === "conv-factor") {
+      const f = data.convergence.factor;
+      const defs: [string, string, string][] = [["gap", "gap", "s0"], ["tau", "τ̃", "s1"], ["dpsi", "Δψ", "s2"], ["rt", "r̃", "s3"]];
+      const series: Ser[] = [];
+      const lr = [f.lam[0], f.lam[f.lam.length - 1]];
+      for (const [k, name, cls] of defs) {
+        const m = f.measures[k];
+        series.push({ name, cls, kind: "markers", pts: f.lam.map((l: number, i: number) => [l, m.c[i]] as [number, number]) });
+        series.push({ name: "fit", cls, kind: "line", legend: false, pts: lr.map((l) => [l, m.a * l ** m.s] as [number, number]) });
+        series.push({ name: "thesis", cls, kind: "line", dash: "1 3", legend: false, pts: lr.map((l) => [l, m.thesis.a * l ** m.thesis.s] as [number, number]) });
+      }
+      series.push({ name: "fit to these data", cls: "ink", kind: "line", pts: [] });
+      series.push({ name: "thesis", cls: "ink", kind: "line", dash: "1 3", pts: [] });
+      xyplot(svg, W, { xLabel: "regularization λ", yLabel: "factor c(λ) in v ≈ c(λ) r^p", xlog: true, series });
+    } else if (kind === "conv-lambda") {
+      const d = data.convergence.lambda[svg.dataset.delta!];
+      const pts = (v: number[]) => d.lam.map((l: number, i: number) => [l, v[i]] as [number, number]);
+      xyplot(svg, W, {
+        xLabel: "regularization λ", yLabel: "number of variables", xlog: true, ylog: false, yZero: true,
+        series: [
+          { name: "support vectors", cls: "s0", kind: "both", pts: pts(d.n_sv) },
+          { name: "free variables", cls: "s1", kind: "both", pts: pts(d.n_free) },
+        ],
+      });
+    } else if (kind === "conv-size") {
+      const m = svg.dataset.metric as "steps" | "seconds";
+      const e = m === "steps" ? "exp_steps" : "exp_time";
+      xyplot(svg, W, {
+        xLabel: "number of samples n", yLabel: m === "steps" ? "SMO steps" : "time [s]", xlog: true,
+        series: Object.entries<any>(data.convergence.size.lam).map(([lam, d], i) => ({
+          name: `λ = ${Number(lam).toExponential(0)} (n^${d[e].toFixed(2)})`, cls: SER[i], kind: "both" as const,
+          pts: d.n.map((n: number, j: number) => [n, d[m][j]] as [number, number]),
+        })),
+      });
+    } else if (kind === "primal-dist") {
+      const P = data.primal;
+      const style: [string, string, string, string?][] = [["gd", "gradient descent", "s3"], ["pgd", "preconditioned GD", "s0"], ["pgd_w1", "PGD with W = I", "s1", "6 3"]];
+      const series: Ser[] = style.map(([m, name, cls, dash]) => {
+        const t = P.traces[m];
+        return { name, cls, dash, kind: "line", pts: t.step.map((k: number, i: number) => [k, t.dist[i]] as [number, number]).filter((p: number[]) => p[0] >= 1 && p[1] > 0) };
+      });
+      series.push({ name: "SMO (dual)", cls: "s2", kind: "both", pts: P.smo.filter((r: any) => r.steps >= 1 && r.dist > 0).map((r: any) => [r.steps, r.dist] as [number, number]) });
+      xyplot(svg, W, { xLabel: "iteration k", yLabel: "distance ‖z − z*‖", xlog: true, series });
+    } else if (kind === "primal-bound") {
+      const t = data.primal.traces.pgd, st = data.primal.stats.pgd;
+      const pick = (key: string): [number, number][] => t.F.map((f: number, i: number) => [f, t[key][i]] as [number, number]).filter((p: number[]) => p[0] > 0 && p[1] > 0);
+      const fr = [Math.min(...t.F.filter((f: number) => f > 0)), Math.max(...t.F)];
+      xyplot(svg, W, {
+        xLabel: "optimality residual ‖F(z)‖", yLabel: "measure", xlog: true,
+        series: [
+          { name: `‖z − z*‖ (slope ${st.slope_dist.toFixed(2)})`, cls: "s0", kind: "dots", pts: pick("dist") },
+          { name: `ψ − ψ* (slope ${st.slope_gap.toFixed(2)})`, cls: "s1", kind: "dots", pts: pick("psi_gap") },
+          { name: `‖∇ψ‖ (slope ${st.slope_grad.toFixed(2)})`, cls: "s2", kind: "dots", pts: pick("grad") },
+          { name: "y = ‖F‖", cls: "ink", kind: "line", dash: "1 3", pts: fr.map((f) => [f, f] as [number, number]) },
+        ],
+      });
+    } else if (kind === "primal-parts") {
+      const style: [string, string, string, string, string?][] = [
+        ["pgd", "dist_alpha", "PGD ‖α − α*‖", "s0"], ["pgd", "dist_b", "PGD |b − b*|", "s0", "2 3"],
+        ["pgd_w1", "dist_alpha", "W = I: ‖α − α*‖", "s1"], ["pgd_w1", "dist_b", "W = I: |b − b*|", "s1", "2 3"],
+      ];
+      xyplot(svg, W, {
+        xLabel: "iteration k", yLabel: "distance", xlog: true,
+        series: style.map(([m, key, name, cls, dash]) => {
+          const t = data.primal.traces[m];
+          return { name, cls, dash, kind: "line" as const, pts: t.step.map((k: number, i: number) => [k, t[key][i]] as [number, number]).filter((p: number[]) => p[0] >= 1 && p[1] > 0) };
+        }),
+      });
+    } else if (kind === "newton-steps") {
+      const nw = data.newton;
+      xyplot(svg, W, {
+        xLabel: "number of samples n", yLabel: "Newton iterations", xlog: true, ylog: false, yZero: true,
+        series: Object.entries<any>(nw.lam).reverse().map(([lam, d], i) => ({
+          name: `λ = ${Number(lam).toExponential(0)}`, cls: SER[i], kind: "both" as const,
+          pts: nw.n.map((n: number, j: number) => [n, d.newton_steps[j]] as [number, number]),
+        })),
+      });
+    } else if (kind === "newton-time") {
+      const nw = data.newton, d = nw.lam[svg.dataset.lam!];
+      const pts = (v: number[]) => nw.n.map((n: number, j: number) => [n, v[j]] as [number, number]);
+      xyplot(svg, W, {
+        xLabel: "number of samples n", yLabel: "time [s]", xlog: true,
+        series: [
+          { name: "Newton from 0", cls: "s0", kind: "both", pts: pts(d.newton_t) },
+          { name: "SMO to 1e-8", cls: "s1", kind: "both", pts: pts(d.smo_t) },
+          { name: "SMO + Newton", cls: "s2", kind: "both", pts: pts(d.two_t) },
+          { name: "kernel matrix", cls: "ink", kind: "line", dash: "1 3", pts: pts(nw.kernel) },
+        ],
+      });
     }
   }
 
@@ -137,5 +389,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   svg.bench .cellt { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
   svg.bench .cellt.inv { fill: var(--surface); }
   svg.bench .best { fill: none; stroke: var(--ink); stroke-width: 2; }
+  svg.bench .ln { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  svg.bench .stk.s0 { stroke: var(--accent); }
+  svg.bench .stk.s1 { stroke: var(--accent-2); }
+  svg.bench .stk.s2 { stroke: var(--ok); }
+  svg.bench .stk.s3 { stroke: var(--muted); }
+  svg.bench .stk.ink { stroke: var(--ink-2); }
   svg.bench .hline { stroke: var(--ink-2); stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; }
 </style>
