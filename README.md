@@ -25,6 +25,7 @@ npm run build      # static output in dist/
 | `public/wasm/smo_solver_wasm.wasm` | `npm run wasm` (needs the sibling checkout `../smo-solver` and the Rust target `wasm32-unknown-unknown`) |
 | `public/figures/*-{light,dark}.svg`, `hpo-summary.json` | `python scripts/make_figures.py` (needs `optimized-svm` and `matplotlib`) |
 | `public/data/{hpo-path,gradient-slice,ard-path}.json` (Explore page; `hpo-path.json` also holds the gradient field) | `python scripts/make_explorer_data.py` (needs `optimized-svm`) |
+| `public/data/hard-constraints.json` (Explore hard/soft comparison, including infeasible data) | `python scripts/make_hard_constraint_data.py` with the development version of `optimized-svm`; verifies feasibility and invariance under positive λ before export |
 | `public/data/bench.json` (Benchmarks page) | `python scripts/make_benchmark_data.py` from the raw results in `data/benchmarks/` (see the docstring of the script for how they are produced) |
 | `public/figures/thesis/*.png` | figures of the dissertation |
 | `src/data/thesis.ts` | chapter outline, BibTeX and Table 10.4.1 |

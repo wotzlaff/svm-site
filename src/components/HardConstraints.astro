@@ -1,0 +1,132 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class="hard-constraints card explainer" data-src={`${base}/data/hard-constraints.json`}>
+  <div>
+    <svg class="plot" viewBox="0 0 560 360" role="img" aria-labelledby="hard-title hard-desc">
+      <title id="hard-title">Hard constraints compared with a soft SVM</title>
+      <desc id="hard-desc">Switch between a maximal margin classifier and hard epsilon regression. Conflicting observations at the same input make the hard constraints impossible unless the regression tubes overlap.</desc>
+    </svg>
+    <p class="hint">Blue: hard model. Orange dashed: soft model (λ = 4, no smoothing).
+      Circles: training targets; rings: support vectors of the hard model. RBF kernel, scaling s = 1.</p>
+  </div>
+  <div>
+    <label>Training problem
+      <select data-kind disabled>
+        <option value="classification">Maximal margin classifier · 4.1.2</option>
+        <option value="regression">Hard ε-regression · 4.2.3</option>
+      </select>
+    </label>
+    <label class="conflict"><input type="checkbox" data-conflict disabled /> Add conflicting targets at x = 0</label>
+    <label class="slider" data-epsilon-row hidden>
+      <span>Tube radius ε <output data-epsilon-out>0.15</output></span>
+      <input type="range" min="0" max="4" step="1" value="1" data-epsilon disabled />
+    </label>
+    <dl class="stats" aria-live="polite">
+      <div><dt>Hard problem</dt><dd data-status>Loading…</dd></div>
+      <div><dt>Max. constraint violation</dt><dd data-violation>–</dd></div>
+      <div><dt>Change when λ = 0.01 or 100</dt><dd data-delta>–</dd></div>
+    </dl>
+    <p class="note" data-explanation>
+      Every training margin must be at least 1. The hard model minimizes its RKHS norm subject to
+      these constraints; a soft model may pay a penalty to violate them.
+    </p>
+    <p class="note">These are precomputed fits of <code>optimized-svm</code> (unreleased), with feasibility
+      and λ invariance checked by the data generator. For a hard model, changing positive λ rescales
+      the dual variables and leaves the prediction unchanged.</p>
+    <noscript><p>Enable JavaScript to explore the examples. Conflicting class labels at an identical input are infeasible; regression targets −0.6 and +0.6 need ε ≥ 0.6.</p></noscript>
+  </div>
+</div>
+
+<script>
+  import { fmt, observeWidth, onTheme } from "../lib/plot";
+
+  type Frame = { epsilon: number | null; soft: number[]; hard: number[] | null;
+    support: number[]; violation: number | null; lambda_delta: number | null };
+  type Scenario = { kind: string; conflict: boolean; x: number[]; y: number[]; frames: Frame[] };
+  type Data = { grid: number[]; epsilons: number[]; scenarios: Scenario[] };
+  const root = document.querySelector<HTMLElement>(".hard-constraints")!;
+  const svg = root.querySelector("svg")!;
+  const kind = root.querySelector<HTMLSelectElement>("[data-kind]")!;
+  const conflict = root.querySelector<HTMLInputElement>("[data-conflict]")!;
+  const epsilon = root.querySelector<HTMLInputElement>("[data-epsilon]")!;
+  const set = (name: string, value: string) => { root.querySelector(`[data-${name}]`)!.textContent = value; };
+  let data: Data | undefined;
+  let width = 560;
+  const NS = "http://www.w3.org/2000/svg";
+  function el(tag: string, attrs: Record<string, string | number>, text?: string) {
+    const node = document.createElementNS(NS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function draw() {
+    if (!data) return;
+    const regression = kind.value === "regression";
+    const scenario = data.scenarios.find(s => s.kind === kind.value && s.conflict === conflict.checked)!;
+    const frame = scenario.frames[regression ? Number(epsilon.value) : 0];
+    const height = Math.max(290, Math.min(360, width * 0.66));
+    const m = { l: 45, r: 15, t: 24, b: 38 };
+    const bound = Math.max(1.5, ...frame.soft.map(Math.abs), ...(frame.hard ?? []).map(y => Math.abs(y) + (frame.epsilon ?? 0))) * 1.12;
+    const px = (x: number) => m.l + (x + 1.8) / 3.6 * (width - m.l - m.r);
+    const py = (y: number) => height - m.b - (y + bound) / (2 * bound) * (height - m.t - m.b);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.replaceChildren(svg.querySelector("title")!, svg.querySelector("desc")!);
+    for (const y of [-1, 0, 1]) {
+      svg.append(el("line", { x1: px(-1.8), x2: px(1.8), y1: py(y), y2: py(y), class: "guide" }));
+      svg.append(el("text", { x: m.l - 8, y: py(y) + 4, "text-anchor": "end", class: "tick" }, String(y)));
+    }
+    for (const x of [-1.5, 0, 1.5]) svg.append(el("text", { x: px(x), y: height - 15, "text-anchor": "middle", class: "tick" }, String(x)));
+    svg.append(el("text", { x: m.l, y: 14, class: "tick" }, regression ? "prediction / target" : "decision f(x) / class label"));
+    const path = (values: number[]) => values.map((y, i) => `${i ? "L" : "M"}${px(data!.grid[i])},${py(y)}`).join(" ");
+    if (regression && frame.hard) {
+      const top = frame.hard.map(y => y + frame.epsilon!);
+      const bottom = frame.hard.map(y => y - frame.epsilon!);
+      const polygon = [...top.map((y, i) => `${px(data!.grid[i])},${py(y)}`),
+        ...bottom.map((y, i) => `${px(data!.grid[i])},${py(y)}`).reverse()].join(" ");
+      svg.append(el("polygon", { points: polygon, class: "tube" }));
+    }
+    svg.append(el("path", { d: path(frame.soft), class: "soft" }));
+    if (frame.hard) svg.append(el("path", { d: path(frame.hard), class: "hard" }));
+    scenario.x.forEach((x, i) => {
+      if (frame.support.includes(i)) svg.append(el("circle", { cx: px(x), cy: py(scenario.y[i]), r: 8, class: "support" }));
+      svg.append(el("circle", { cx: px(x), cy: py(scenario.y[i]), r: 4, class: "point" }));
+    });
+    root.querySelector<HTMLElement>("[data-epsilon-row]")!.hidden = !regression;
+    set("epsilon-out", String(data.epsilons[Number(epsilon.value)]));
+    set("status", frame.hard ? "Feasible" : "Infeasible");
+    set("violation", frame.violation === null ? "–" : fmt(frame.violation));
+    set("delta", frame.lambda_delta === null ? "–" : fmt(frame.lambda_delta));
+    set("explanation", !regression
+      ? conflict.checked ? "The same input cannot have both f(0) ≥ 1 and f(0) ≤ −1. No hard solution exists; the soft model compromises."
+        : "Every training margin yᵢ f(xᵢ) must be at least 1. A soft model can trade margin violations against a smaller norm."
+      : conflict.checked ? "The observations at x = 0 demand proximity to both −0.6 and +0.6. Their intervals overlap exactly when ε ≥ 0.6. Try widening the tube."
+        : "Every residual must satisfy |f(xᵢ) − yᵢ| ≤ ε. The hard solution has the smallest RKHS norm among all feasible functions.");
+  }
+  for (const control of [kind, conflict, epsilon]) control.addEventListener("input", draw);
+  observeWidth(svg, w => { width = w; draw(); });
+  onTheme(draw);
+  fetch(root.dataset.src!).then(response => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }).then((loaded: Data) => {
+    data = loaded;
+    for (const control of [kind, conflict, epsilon]) control.disabled = false;
+    draw();
+  }).catch(() => set("status", "Example data could not be loaded. Please reload."));
+</script>
+
+<style>
+  label { display: block; }
+  select { width: 100%; margin-top: .4rem; padding: .55rem; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  .conflict { display: flex; align-items: baseline; gap: .5rem; margin-top: 1rem; }
+  .slider[hidden] { display: none; }
+  svg :global(.guide) { stroke: var(--line); stroke-dasharray: 4 4; }
+  svg :global(.tick) { fill: var(--muted); font-size: 11px; }
+  svg :global(.hard), svg :global(.soft) { fill: none; stroke-width: 2.3; }
+  svg :global(.hard), svg :global(.support) { stroke: var(--accent); }
+  svg :global(.soft) { stroke: var(--accent-2); stroke-dasharray: 6 4; }
+  svg :global(.support) { fill: none; stroke-width: 1.5; }
+  svg :global(.point) { fill: var(--ink); }
+  svg :global(.tube) { fill: var(--accent); opacity: .12; }
+</style>

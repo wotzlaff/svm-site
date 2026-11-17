@@ -6,9 +6,10 @@ import HpoPath from "../components/HpoPath.astro";
 import GradientSlice from "../components/GradientSlice.astro";
 import ArdBars from "../components/ArdBars.astro";
 import GradientField from "../components/GradientField.astro";
+import HardConstraints from "../components/HardConstraints.astro";
 
 const description =
-  "Interactive explainers for support vector machines: regression with the ε-tube, smoothed loss functions, gradient-based hyperparameter optimization, exact hypergradients and automatic relevance determination.";
+  "Interactive explainers for support vector machines: hard margins and ε-tubes, smoothed loss functions, gradient-based hyperparameter optimization, exact hypergradients and automatic relevance determination.";
 ---
 
 <Base title="Explore: interactive SVM explainers" description={description}>
@@ -33,6 +34,27 @@ const description =
         or beyond its boundary. Draw your own data, widen the tube and watch the support vectors disappear.
       </p>
       <RegressionDemo />
+    </div>
+  </section>
+
+  <section id="hard-constraints">
+    <div class="wrap">
+      <p class="eyebrow">Hard constraints · Sections 4.1.2 and 4.2.3</p>
+      <h2>When every observation must fit</h2>
+      <p class="lead">
+        A maximal margin classifier requires every point to lie on the correct side of its margin.
+        Hard ε-regression requires every target to lie inside its tube. Add conflicting observations
+        and see when these requirements become impossible. Widening ε can restore feasibility;
+        changing λ cannot.
+      </p>
+      <HardConstraints />
+      <p>
+        Try <code>SmoothSVC(loss="hard_margin")</code> or
+        <code>SmoothSVR(loss="hard_epsilon_insensitive", epsilon=0.15, normalize_y=False)</code>
+        in the development version of <code>optimized-svm</code>.
+        These models solve the constraints directly. The corresponding indicator losses are zero
+        on the feasible set and infinite outside it.
+      </p>
     </div>
   </section>
 
@@ -108,5 +130,9 @@ const description =
   }
   h1 {
     font-size: clamp(1.9rem, 4vw, 2.7rem);
+  }
+  #hard-constraints code {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 </style>
