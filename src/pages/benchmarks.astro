@@ -1,12 +1,13 @@
 ---
 import Base from "../layouts/Base.astro";
 import BenchCharts from "../components/BenchCharts.astro";
+import SamplingBenchmarks from "../components/SamplingBenchmarks.astro";
 import bench from "../../public/data/bench.json";
 import blocks from "../../public/data/block-benchmarks.json";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const description =
-  "Measured: the SMO solver against LIBSVM, gradient-based hyperparameter optimization against grid, random and successive-halving search, speed-ups between releases and the best switching point from SMO to Newton's method.";
+  "Measured: the SMO solver against LIBSVM, gradient-based hyperparameter optimization against grid, random and successive-halving search, holdout and short cross-validation, speed-ups between releases and the best switching point from SMO to Newton's method.";
 
 const methods = ["gradient method", "gradient method, ARD", "grid search (13 x 11)", "random search (30)", "successive halving"];
 const names = Object.keys(bench.search);
@@ -81,6 +82,8 @@ const blockUsage = 'solve_regression(x, y, lam=0.01, working_set_size=8)\nOptimi
         Measurements behind the claims of this site: how fast the solver is, how many evaluations the
         gradient method saves, how much faster the packages became since the first release, when to hand
         over from SMO to Newton's method, and what shrinking and the stopping criterion do inside the solver.
+        The <a href="#sampling">holdout and training subset study</a> compares tuning time
+        and test quality.
       </p>
       <p class="muted">
         All numbers come from the scripts in the repositories and were measured on a shared 12-core Linux
@@ -572,6 +575,8 @@ const blockUsage = 'solve_regression(x, y, lam=0.01, working_set_size=8)\nOptimi
       </p>
     </div>
   </section>
+
+  <SamplingBenchmarks />
 
   <section id="versions">
     <div class="wrap">

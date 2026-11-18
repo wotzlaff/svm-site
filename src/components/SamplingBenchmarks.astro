@@ -1,0 +1,174 @@
+---
+import sampling from "../../public/data/sampling-benchmarks.json";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const raw = `${base}/data/sampling`;
+const speed = (value: number) => `${value.toFixed(2)}×`;
+const seconds = (value: number) => `${value.toFixed(value < 1 ? 3 : 2)} s`;
+const delta = (metric: string, value: number) => {
+  const scaled = metric === "accuracy" ? value * 100 : value;
+  const digits = metric === "accuracy" ? 2 : 3;
+  const rounded = Number(scaled.toFixed(digits));
+  return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""}${Math.abs(rounded).toFixed(digits)}`;
+};
+const score = (metric: string, value: number) => metric === "accuracy"
+  ? `${(value * 100).toFixed(2)}% accuracy`
+  : `${value.toFixed(3)} RMSE`;
+const holdoutFor = (id: string) => sampling.datasets.find((dataset) => dataset.id === id)!
+  .methods.find((method) => method.id === "holdout")!;
+const breastHoldout = holdoutFor("breast_cancer");
+const diabetesHoldout = holdoutFor("diabetes");
+const stopCounts = (
+  method: { converged: number; capped: number },
+  seeds: number,
+) => {
+  const other = seeds - method.converged - method.capped;
+  return [
+    `${method.converged}/${seeds} converged`,
+    method.capped > 0 ? `${method.capped} capped` : null,
+    other > 0 ? `${other} other stops` : null,
+  ].filter(Boolean).join(" · ");
+};
+---
+
+<section id="sampling" aria-labelledby="sampling-title">
+  <div class="wrap">
+    <p class="eyebrow">Hyperparameter search</p>
+    <h2 id="sampling-title">Fixed holdout and short cross-validation</h2>
+    <p class="lead">
+      A fixed holdout replaces five inner training and hypergradient solves per evaluation with one.
+      This study compares that shortcut with a short five-fold search and with tuning on fewer
+      training rows before a short five-fold search.
+    </p>
+    <p>
+      On Breast Cancer Wisconsin, holdout gave a median paired speedup of {speed(breastHoldout.speedup)}
+      with a median test accuracy difference of {delta("accuracy", breastHoldout.delta)} percentage points.
+      On Diabetes, the corresponding values were {speed(diabetesHoldout.speedup)} and
+      {" "}{delta("rmse", diabetesHoldout.delta)} test RMSE. Full CV and holdout converged on every split.
+      Most short searches reached their iteration budget.
+    </p>
+    <p>
+      Each dataset uses five paired 80/20 development/test splits and one thread.
+      The fixed holdout reuses the first of the five development folds throughout the search.
+      The outer test set is reserved for scoring the final model.
+      Features of the real datasets are standardized on the full development set before the inner
+      split. All protocols use that same transformation.
+    </p>
+
+    <div class="sampling-grid">
+      {sampling.datasets.map((dataset) => (
+        <div class="sampling-dataset">
+          <h3 id={`sampling-${dataset.id}`}>{dataset.label}</h3>
+          <p class="dataset-meta">
+            {dataset.kind === "real" ? "Real data" : "Synthetic data"} · {dataset.samples} observations ·{" "}
+            {dataset.metric === "accuracy" ? "classification" : "regression"}
+            {dataset.source && <> · <a href={dataset.source}>Dataset source</a></>}
+          </p>
+          <div class="card table-scroll" role="region" aria-labelledby={`sampling-${dataset.id}`} tabindex="0">
+            <table>
+              <caption>Median paired differences and ranges relative to full CV</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Search protocol</th>
+                  <th scope="col">Speedup</th>
+                  <th scope="col">{dataset.metric === "accuracy" ? "Accuracy Δ (pp)" : "RMSE Δ"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dataset.methods.map((method) => (
+                  <tr>
+                    <th scope="row">
+                      {method.label}
+                      <span class="detail">{stopCounts(method, dataset.seeds)}</span>
+                    </th>
+                    <td>
+                      {speed(method.speedup)}
+                      <span class="detail">{method.id === "cv5" ? seconds(method.seconds)
+                        : `${speed(method.speedup_min)} to ${speed(method.speedup_max)}`}</span>
+                    </td>
+                    <td>
+                      {delta(dataset.metric, method.delta)}
+                      <span class="detail">{method.id === "cv5" ? score(dataset.metric, method.score)
+                        : `${delta(dataset.metric, method.delta_min)} to ${delta(dataset.metric, method.delta_max)}`}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <p class="sampling-note">
+      Reference times and test scores in the full CV rows are medians. Other rows show the median
+      and range of per-split speedups and test score differences against the reference on the same
+      split. Positive accuracy differences are better and negative RMSE differences are better.
+      RMSE is in the original target units. A capped run exhausted its iteration budget in the
+      final tuning stage.
+    </p>
+    <p class="sampling-note">
+      Full CV and fixed holdout allow up to forty L-BFGS-B iterations. Short CV allows five.
+      The subset protocols sample half of the first fold's training rows once, keep its validation
+      rows and tune for up to ten iterations. They pass the selected hyperparameters to a fresh
+      search capped at five iterations on all five folds. The scaled protocol adjusts λ by the
+      training-size ratio and reverses that adjustment before full CV. The direct protocol
+      transfers λ unchanged. Timings include every refit, including the extra refit at the end of
+      subset tuning.
+    </p>
+    <p class="sampling-note">
+      <a href={`${raw}/hpo_sampling_web.csv`}>Per-split results (CSV)</a> ·
+      <a href={`${raw}/hpo_sampling_web.txt`}>Run log and reproduction command</a> ·
+      <a href={`${raw}/hpo_holdout.py`}>Benchmark script</a>
+    </p>
+  </div>
+</section>
+
+<style>
+  .sampling-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 31rem), 1fr));
+    gap: 1.25rem;
+    margin: 1.5rem 0;
+  }
+  .sampling-dataset {
+    min-width: 0;
+  }
+  .sampling-dataset h3 {
+    margin: 0;
+  }
+  .dataset-meta,
+  .sampling-note {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .dataset-meta {
+    margin: 0.25rem 0 0.6rem;
+  }
+  .sampling-dataset table {
+    width: 100%;
+  }
+  caption {
+    text-align: left;
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  th[scope="row"] {
+    font-weight: 600;
+    white-space: normal;
+    min-width: 8.2rem;
+  }
+  td {
+    font-variant-numeric: tabular-nums;
+  }
+  th,
+  td {
+    vertical-align: top;
+  }
+  .detail {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 400;
+  }
+</style>
