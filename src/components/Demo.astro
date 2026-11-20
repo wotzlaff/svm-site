@@ -4,7 +4,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <div class="demo card" data-wasm={`${base}/wasm/smo_solver_wasm.wasm`}>
   <div class="demo-canvas">
     <canvas width="560" height="560" tabindex="0" role="application" aria-label="Training data and decision function" aria-describedby="demo-hint"></canvas>
-    <p class="hint" id="demo-hint">Click to add a point of the selected class, right-click (or shift-click) for the other class. With the keyboard: arrow keys move the cursor (hold Shift for larger steps), Enter adds a point, Shift+Enter adds one of the other class, Backspace removes the last point.</p>
+    <p class="hint" id="demo-hint">Click to add a point of the selected class, right-click (or shift-click) for the other class. With the keyboard: arrow keys move the cursor (hold Shift for larger steps), Enter adds a point, Shift+Enter adds one of the other class, Backspace removes the last point. With the logistic loss, the probability at the pointer or cursor is shown in the panel.</p>
   </div>
   <div class="demo-panel">
     <div class="row">
@@ -14,6 +14,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <button class="chip" data-preset="moons" aria-pressed="false">Moons</button>
         <button class="chip" data-preset="rings" aria-pressed="false">Rings</button>
         <button class="chip" data-preset="clear" aria-pressed="false">Empty</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="label">Loss</span>
+      <div class="chips" data-losses role="group" aria-label="Loss function">
+        <button class="chip active" data-loss="hinge" aria-pressed="true">Hinge (SVM)</button>
+        <button class="chip" data-loss="logistic" aria-pressed="false">Logistic (probabilities)</button>
       </div>
     </div>
     <div class="row">
@@ -33,40 +40,48 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </label>
     <label class="slider">
       <span>Loss smoothing δ <output data-out="smoothing"></output></span>
-      <input type="range" min="0" max="1" step="0.05" value="0" data-param="smoothing" />
+      <input type="range" min="0" max="1" step="0.05" value="0" data-param="smoothing" aria-describedby="demo-smooth-reason" />
     </label>
+    <p class="slider-reason" id="demo-smooth-reason" data-smooth-reason hidden>Not used by the logistic loss: it is already smooth.</p>
     <div class="btn-row">
       <button class="btn small primary" type="button" data-tune>Tune λ and γ</button>
       <button class="btn small" type="button" data-stop hidden>Stop</button>
       <button class="btn small" type="button" data-watch>Watch SMO</button>
     </div>
+    <p class="readout" data-readout hidden aria-hidden="true"></p>
+    <p class="sr-only" role="status" aria-live="polite" data-readout-live></p>
     <p class="tune-status" role="status" data-status></p>
     <div class="tune-panel" data-tune-panel hidden><div class="tune-inset" data-inset></div></div>
     <div class="watch-panel" data-watch-panel hidden>
       <button class="btn small" type="button" data-play>Pause</button>
-      <input type="range" min="0" max="0" step="1" value="0" data-scrub aria-label="SMO frame" />
+      <input type="range" min="0" max="0" step="1" value="0" data-scrub aria-label="SMO frame" data-scrub-label />
       <button class="btn small" type="button" data-watch-close>Close</button>
       <output data-watch-out></output>
     </div>
     <dl class="stats" aria-live="polite">
       <div><dt>samples</dt><dd data-stat="n">–</dd></div>
-      <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
-      <div><dt>SMO steps</dt><dd data-stat="steps">–</dd></div>
+      <div><dt data-label="sv">support vectors</dt><dd data-stat="sv">–</dd></div>
+      <div><dt data-label="steps">SMO steps</dt><dd data-stat="steps">–</dd></div>
       <div><dt>training time</dt><dd data-stat="time">–</dd></div>
       <div><dt>training accuracy</dt><dd data-stat="acc">–</dd></div>
-      <div><dt>duality gap</dt><dd data-stat="gap">–</dd></div>
-      <div><dt>5-fold CV loss</dt><dd data-stat="cv">–</dd></div>
+      <div><dt data-label="gap">duality gap</dt><dd data-stat="gap">–</dd></div>
+      <div data-logistic-only hidden><dt>training log loss</dt><dd data-stat="logloss">–</dd></div>
+      <div><dt data-label="cv">5-fold CV loss</dt><dd data-stat="cv">–</dd></div>
       <div><dt>CV evaluations</dt><dd data-stat="evals">–</dd></div>
     </dl>
     <p class="note">
-      Runs the Rust solver <code>smo-solver</code> compiled to WebAssembly (149 KB) directly in your
-      browser. Ringed points are support vectors.
+      Runs the Rust solver <code>smo-solver</code> compiled to WebAssembly (167 KB) directly in your
+      browser. <span data-note-hinge>Ringed points are support vectors.</span>
+      <span data-note-logistic hidden>The logistic loss is trained by Newton's method. The colour shows
+      P(class +1) with contours at 0.1, 0.5 (bold, the decision boundary) and 0.9. There are no
+      support-vector rings: every point contributes to the model.</span>
     </p>
     <p class="note">
-      <strong>Tune λ and γ</strong> minimizes the 5-fold cross-validation loss (smoothed hinge loss on the held-out folds) with L-BFGS-B, using the
-      exact gradient with respect to log λ and log γ, in a background thread. The gradient needs a smoothed
-      loss, so a smoothing δ of 0 is raised to 0.2 for tuning. <strong>Watch SMO</strong> replays the
-      solver iteration by iteration for the current parameters.
+      <strong>Tune λ and γ</strong> minimizes the 5-fold cross-validation loss (<span data-note-cvloss>smoothed hinge loss</span> on the held-out folds) with L-BFGS-B, using the
+      exact gradient with respect to log λ and log γ, in a background thread.
+      <span data-note-smooth>The gradient needs a smoothed loss, so a smoothing δ of 0 is raised to 0.2 for tuning.</span>
+      <strong data-note-watch>Watch SMO</strong> replays the
+      <span data-note-iter>solver iteration by iteration</span> for the current parameters.
     </p>
   </div>
 </div>
@@ -90,7 +105,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   /** Exact (unrounded) parameters set by the tuner; cleared as soon as a slider is moved by hand. */
   let exact: { lam: number; gamma: number; smoothing: number } | null = null;
   let busy: "idle" | "tuning" = "idle";
-  let watch: { trace: SvmTraceResult; snapshot: typeof points; frame: number; timer: number; playing: boolean } | null = null;
+  let watch: { trace: SvmTraceResult; snapshot: typeof points; frame: number; timer: number; playing: boolean; loss: Loss } | null = null;
 
   // deterministic random numbers so that presets look the same on every visit
   function rng(seed: number) {
@@ -153,11 +168,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     return x >= 0.01 && x < 1000 ? x.toPrecision(3) : x.toExponential(1);
   }
 
-  let last: { dec: ArrayLike<number> | null; sv: Set<number> } = { dec: null, sv: new Set() };
+  type Loss = "hinge" | "logistic";
+  let loss: Loss = "hinge";
+  const sigmoid = (f: number) => 1 / (1 + Math.exp(-f));
+  const LOGIT_90 = Math.log(9); // logit of p = 0.9 (and minus the logit of p = 0.1)
+  let last: { dec: ArrayLike<number> | null; sv: Set<number>; loss: Loss } = { dec: null, sv: new Set(), loss };
   const cursor = { x: 0.5, y: 0.5 };
+  const redraw = () => render(last.dec, last.sv, last.loss);
 
-  function render(dec: ArrayLike<number> | null, sv: Set<number>) {
-    last = { dec, sv };
+  /** Draws the picture. `dec` is the decision function (hinge) or the logit (logistic) on the grid. */
+  function render(dec: ArrayLike<number> | null, sv: Set<number>, lo: Loss = loss) {
+    last = { dec, sv, loss: lo };
     const W = canvas.width, H = canvas.height;
     const bg = hexToRgb(css("--surface") || "#ffffff");
     const pos = hexToRgb(css("--accent") || "#1d4ed8");
@@ -166,7 +187,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     for (let j = 0; j < RES; j++) {
       for (let i = 0; i < RES; i++) {
         const d = dec ? dec[j * RES + i] : 0;
-        const w = Math.min(Math.abs(d), 1.5) / 1.5 * 0.32;
+        // hinge: |f| up to 1.5; logistic: |2 P(+1) - 1| (0.5 is neutral)
+        const w = (lo === "logistic" ? Math.abs(2 * sigmoid(d) - 1) : Math.min(Math.abs(d), 1.5) / 1.5) * 0.32;
         const c = d > 0 ? pos : neg;
         const o = 4 * ((RES - 1 - j) * RES + i);
         for (let k = 0; k < 3; k++) img.data[o + k] = Math.round(bg[k] * (1 - w) + c[k] * w);
@@ -177,38 +199,46 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     off.getContext("2d")!.putImageData(img, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(off, 0, 0, W, H);
-    // decision boundary: marching squares on the grid
+    // contour lines: marching squares on the grid. hinge: f = 0; logistic: p = 0.1, 0.5 (bold), 0.9
     if (dec) {
-      ctx.strokeStyle = css("--ink");
-      ctx.lineWidth = 2;
-      ctx.beginPath();
       const sx = W / (RES - 1), sy = H / (RES - 1);
       const at = (i: number, j: number) => dec[j * RES + i];
-      const lerp = (a: number, b: number) => a / (a - b);
-      for (let j = 0; j < RES - 1; j++) {
-        for (let i = 0; i < RES - 1; i++) {
-          const v = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
-          const pts: [number, number][] = [];
-          const edges: [number, number, number, number, number, number][] = [
-            [0, 1, i, j, 1, 0], [1, 2, i + 1, j, 0, 1], [3, 2, i, j + 1, 1, 0], [0, 3, i, j, 0, 1],
-          ];
-          for (const [a, b, x0, y0, dx, dy] of edges) {
-            if ((v[a] > 0) !== (v[b] > 0)) {
-              const t = lerp(v[a], v[b]);
-              pts.push([(x0 + dx * t) * sx, H - (y0 + dy * t) * sy]);
+      const contour = (level: number, width: number, alpha: number) => {
+        ctx.strokeStyle = css("--ink");
+        ctx.lineWidth = width;
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        for (let j = 0; j < RES - 1; j++) {
+          for (let i = 0; i < RES - 1; i++) {
+            const v = [at(i, j) - level, at(i + 1, j) - level, at(i + 1, j + 1) - level, at(i, j + 1) - level];
+            const pts: [number, number][] = [];
+            const edges: [number, number, number, number, number, number][] = [
+              [0, 1, i, j, 1, 0], [1, 2, i + 1, j, 0, 1], [3, 2, i, j + 1, 1, 0], [0, 3, i, j, 0, 1],
+            ];
+            for (const [a, b, x0, y0, dx, dy] of edges) {
+              if ((v[a] > 0) !== (v[b] > 0)) {
+                const t = v[a] / (v[a] - v[b]);
+                pts.push([(x0 + dx * t) * sx, H - (y0 + dy * t) * sy]);
+              }
             }
-          }
-          if (pts.length >= 2) {
-            ctx.moveTo(...pts[0]);
-            ctx.lineTo(...pts[1]);
-            if (pts.length === 4) {
-              ctx.moveTo(...pts[2]);
-              ctx.lineTo(...pts[3]);
+            if (pts.length >= 2) {
+              ctx.moveTo(...pts[0]);
+              ctx.lineTo(...pts[1]);
+              if (pts.length === 4) {
+                ctx.moveTo(...pts[2]);
+                ctx.lineTo(...pts[3]);
+              }
             }
           }
         }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      };
+      if (lo === "logistic") {
+        contour(-LOGIT_90, 1, 0.55);
+        contour(LOGIT_90, 1, 0.55);
       }
-      ctx.stroke();
+      contour(0, 2, 1);
     }
     points.forEach((p, k) => {
       const x = p.x * W, y = (1 - p.y) * H;
@@ -216,7 +246,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       ctx.beginPath();
       ctx.arc(x, y, 3.6, 0, 2 * Math.PI);
       ctx.fill();
-      if (sv.has(k)) {
+      if (lo === "hinge" && sv.has(k)) {
         ctx.strokeStyle = css("--ink");
         ctx.lineWidth = 1.2;
         ctx.beginPath();
@@ -224,6 +254,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         ctx.stroke();
       }
     });
+    updateReadout();
     if (document.activeElement === canvas && keyboardActive) {
       const x = cursor.x * W, y = (1 - cursor.y) * H;
       ctx.strokeStyle = css("--ink");
@@ -258,50 +289,104 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const snapshot = points.slice();
     const classes = new Set(snapshot.map((p) => p.c));
     if (n < 2 || classes.size < 2) {
-      for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
+      for (const k of ["sv", "steps", "time", "acc", "gap", "logloss"]) setStat(k, "–");
       render(null, new Set());
       return;
     }
-    if (last.dec) render(last.dec, last.sv); // show the new points right away, the model follows
+    if (last.dec && last.loss === loss) redraw(); // show the new points right away, the model follows
     const { lam, gamma, smoothing } = params();
     const grid = gridPoints();
+    const lossNow = loss;
     let r;
     try {
       r = await solver.train({
         x: new Float64Array(snapshot.flatMap((p) => [p.x, p.y])),
         y: new Float64Array(snapshot.map((p) => p.c)),
-        dim: 2, kind: "classification", lambda: lam, gamma, smoothing, epsilon: 0, tol: 1e-3, grid,
+        dim: 2, kind: kindOf(), lambda: lam, gamma, smoothing, epsilon: 0, tol: trainTol(), grid,
       });
     } catch (err) {
       if (!(err instanceof SvmSupersededError || err instanceof SvmCancelledError)) console.error(err);
       return;
     }
+    if (lossNow !== loss) return; // the loss was switched meanwhile
     showResult(snapshot, r);
   }
+
+  const kindOf = () => (loss === "logistic" ? "logistic" as const : "classification" as const);
+  const trainTol = () => (loss === "logistic" ? 1e-8 : 1e-3);
 
   function showResult(snapshot: typeof points, r: SvmTrainResult) {
     const n = snapshot.length;
     if (r.steps < 0) {
-      for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
+      for (const k of ["sv", "steps", "time", "acc", "gap", "logloss"]) setStat(k, "–");
       render(null, new Set());
       return;
     }
-    let correct = 0;
-    snapshot.forEach((p, k) => (correct += r.decisionOnTrain[k] * p.c > 0 ? 1 : 0));
+    let correct = 0, logLoss = 0;
+    snapshot.forEach((p, k) => {
+      const m = r.decisionOnTrain[k] * p.c; // margin y f
+      correct += m > 0 ? 1 : 0;
+      logLoss += m > 0 ? Math.log1p(Math.exp(-m)) : -m + Math.log1p(Math.exp(m));
+    });
     const nsv = r.support.length;
-    setStat("sv", `${nsv} (${Math.round((100 * nsv) / n)} %)`);
+    setStat("sv", loss === "logistic" ? "–" : `${nsv} (${Math.round((100 * nsv) / n)} %)`);
+    setStat("logloss", loss === "logistic" ? (logLoss / n).toFixed(4) : "–");
     setStat("steps", r.steps.toLocaleString("en"));
     setStat("time", `${(1000 * r.seconds).toFixed(1)} ms`);
     setStat("acc", `${((100 * correct) / n).toFixed(1)} %`);
     setStat("gap", fmt(Math.max(r.gap, 0)));
-    render(r.decisionOnGrid, new Set(Array.from(r.support, Number)));
+    render(r.decisionOnGrid, new Set(loss === "logistic" ? [] : Array.from(r.support, Number)));
   }
+
+  // ---- probability read-out (logistic loss) ----
+  const readoutEl = q("[data-readout]");
+  const liveEl = q("[data-readout-live]");
+  let probe: { x: number; y: number } | null = null;
+  let liveTimer = 0, liveText = "", liveAt = -Infinity;
+  /** Bilinear interpolation of the logit on the grid at (x, y) in [0, 1]^2, then the sigmoid. */
+  function probabilityAt(dec: ArrayLike<number>, x: number, y: number) {
+    const gx = Math.min(Math.max(x, 0), 1) * (RES - 1), gy = Math.min(Math.max(y, 0), 1) * (RES - 1);
+    const i = Math.min(Math.floor(gx), RES - 2), j = Math.min(Math.floor(gy), RES - 2);
+    const tx = gx - i, ty = gy - j;
+    const f = (1 - ty) * ((1 - tx) * dec[j * RES + i] + tx * dec[j * RES + i + 1]) +
+      ty * ((1 - tx) * dec[(j + 1) * RES + i] + tx * dec[(j + 1) * RES + i + 1]);
+    return sigmoid(f);
+  }
+  function updateReadout() {
+    readoutEl.hidden = loss !== "logistic";
+    if (loss !== "logistic") return;
+    if (last.loss !== "logistic" || !last.dec || !probe) {
+      readoutEl.textContent = "Move the pointer over the picture to read P(class +1).";
+      return;
+    }
+    const text = `P(class +1) = ${probabilityAt(last.dec, probe.x, probe.y).toFixed(2)}`;
+    readoutEl.textContent = text;
+    // screen readers: at most one announcement every 800 ms (trailing)
+    liveText = text;
+    if (!liveTimer) {
+      liveTimer = window.setTimeout(() => {
+        liveTimer = 0;
+        liveAt = performance.now();
+        if (liveEl.textContent !== liveText) liveEl.textContent = liveText;
+      }, Math.max(0, liveAt + 800 - performance.now()));
+    }
+  }
+  canvas.addEventListener("pointermove", (ev) => {
+    if (loss !== "logistic") return;
+    const r = canvas.getBoundingClientRect();
+    probe = { x: (ev.clientX - r.left) / r.width, y: 1 - (ev.clientY - r.top) / r.height };
+    updateReadout();
+  });
+  canvas.addEventListener("pointerleave", () => {
+    probe = keyboardActive ? { ...cursor } : null;
+    updateReadout();
+  });
 
   function schedule() {
     const { lam, gamma, smoothing } = params();
     root.querySelector("[data-out=lam]")!.textContent = fmt(lam);
     root.querySelector("[data-out=gamma]")!.textContent = fmt(gamma);
-    root.querySelector("[data-out=smoothing]")!.textContent = smoothing.toFixed(2);
+    root.querySelector("[data-out=smoothing]")!.textContent = loss === "logistic" ? "n/a" : smoothing.toFixed(2);
     if (busy !== "idle") return; // the tuner owns the picture
     if (watch) return showFrame(watch.frame);
     cancelAnimationFrame(pending);
@@ -328,6 +413,45 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     preset(b.getAttribute("data-preset")!);
     edited();
   });
+  const lossButtons = root.querySelectorAll<HTMLButtonElement>("[data-loss]");
+  const smoothInput = sliders("smoothing");
+  /** Adapts labels, notes and the smoothing slider to the selected loss. */
+  function applyLoss() {
+    const lg = loss === "logistic";
+    const set = (sel: string, text: string) => (q(sel).textContent = text);
+    set("[data-label=steps]", lg ? "Newton iterations" : "SMO steps");
+    set("[data-label=gap]", lg ? "optimality" : "duality gap");
+    set("[data-label=cv]", lg ? "5-fold CV log loss" : "5-fold CV loss");
+    set("[data-watch]", lg ? "Watch Newton" : "Watch SMO");
+    set("[data-note-watch]", lg ? "Watch Newton" : "Watch SMO");
+    set("[data-note-iter]", lg ? "Newton iterations" : "solver iteration by iteration");
+    set("[data-note-cvloss]", lg ? "log loss" : "smoothed hinge loss");
+    q("[data-scrub-label]").setAttribute("aria-label", lg ? "Newton frame" : "SMO frame");
+    q("[data-logistic-only]").hidden = !lg;
+    q("[data-note-smooth]").hidden = lg;
+    q("[data-note-hinge]").hidden = lg;
+    q("[data-note-logistic]").hidden = !lg;
+    q("[data-smooth-reason]").hidden = !lg;
+    smoothInput.setAttribute("aria-disabled", String(lg));
+    smoothInput.disabled = lg || busy !== "idle";
+    smoothInput.closest("label")!.classList.toggle("disabled", lg);
+    readoutEl.hidden = !lg;
+    if (!lg) {
+      liveEl.textContent = "";
+      probe = null;
+    }
+  }
+  lossButtons.forEach((b) =>
+    b.addEventListener("click", () => {
+      const next = b.dataset.loss as Loss;
+      if (busy !== "idle" || next === loss) return;
+      loss = next;
+      activate(b.parentElement!, b);
+      applyLoss();
+      if (loss === "logistic" && keyboardActive) probe = { ...cursor };
+      edited(); // closes a running replay, clears the CV numbers and retrains
+    }),
+  );
   root.querySelector("[data-classes]")!.addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest("[data-class]");
     if (!b) return;
@@ -366,13 +490,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     }
     ev.preventDefault();
     keyboardActive = true;
-    render(last.dec, last.sv);
+    probe = { ...cursor };
+    redraw();
   });
   canvas.addEventListener("focus", () => {
     keyboardActive = true;
-    render(last.dec, last.sv);
+    probe = { ...cursor };
+    redraw();
   });
-  canvas.addEventListener("blur", () => render(last.dec, last.sv));
+  canvas.addEventListener("blur", () => redraw());
   canvas.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
     if (busy === "idle") addPoint(ev, true);
@@ -406,7 +532,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   function setLocked(on: boolean) {
-    root.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-param], [data-preset]").forEach((el) => (el.disabled = on));
+    root.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-param], [data-preset], [data-loss]").forEach((el) => (el.disabled = on));
+    smoothInput.disabled = on || loss === "logistic";
     tuneBtn.disabled = on;
     watchBtn.disabled = on;
     stopBtn.hidden = !on;
@@ -421,7 +548,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     sliders("smoothing").value = String(smoothing);
     q("[data-out=lam]").textContent = fmt(lam);
     q("[data-out=gamma]").textContent = fmt(gamma);
-    q("[data-out=smoothing]").textContent = smoothing.toFixed(2);
+    q("[data-out=smoothing]").textContent = loss === "logistic" ? "n/a" : smoothing.toFixed(2);
   }
 
   const classesOk = (snap: typeof points, min: number) =>
@@ -435,7 +562,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     exitWatch();
     let { lam, gamma, smoothing } = params();
     let note = "";
-    if (smoothing <= 0) {
+    if (loss === "hinge" && smoothing <= 0) {
       smoothing = 0.2;
       note = " Smoothing δ was 0 and is now 0.2: the hypergradient needs a smoothed loss.";
     }
@@ -456,14 +583,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       inset.set(hist);
       setStat("cv", pr.value.toFixed(4));
       setStat("evals", String(pr.evaluation));
-      render(pr.decisionOnGrid, new Set(Array.from(pr.support, Number)));
+      render(pr.decisionOnGrid, new Set(loss === "logistic" ? [] : Array.from(pr.support, Number)));
     });
     try {
       const res = await solver.tune(
         {
           x: new Float64Array(snap.flatMap((p) => [p.x, p.y])),
           y: new Float64Array(snap.map((p) => p.c)),
-          dim: 2, kind: "classification", folds: 5, smoothing, epsilon: 0, tol: 1e-6, trainTol: 1e-3,
+          dim: 2, kind: kindOf(), folds: 5, smoothing, epsilon: 0, tol: loss === "logistic" ? 1e-8 : 1e-6, trainTol: trainTol(),
           initial: [Math.log(lam), Math.log(gamma)],
           lower: [range("lam")[0] * LN10, range("gamma")[0] * LN10],
           upper: [range("lam")[1] * LN10, range("gamma")[1] * LN10],
@@ -484,7 +611,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       status(
         `Tuning ${why} after ${res.evaluations} evaluations${Number.isFinite(res.iterations) ? ` (${res.iterations} iterations)` : ""} ` +
           `in ${res.seconds.toFixed(1)} s: λ = ${fmt(Math.exp(res.logLambda))}, γ = ${fmt(Math.exp(res.logGamma))}, ` +
-          `5-fold CV loss ${res.value.toFixed(4)}.` + note,
+          `5-fold CV ${loss === "logistic" ? "log loss" : "loss"} ${res.value.toFixed(4)}.` + note,
       );
     } catch (err) {
       pacer.clear();
@@ -517,11 +644,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const m = RES * RES, n = snapshot.length;
     watch.frame = i;
     const sv = new Set<number>();
-    for (let k = 0; k < n; k++) if (Math.abs(trace.coef[i * n + k]) > 1e-12) sv.add(k);
-    render(trace.decision.subarray(i * m, (i + 1) * m), sv);
+    if (watch.loss === "hinge") for (let k = 0; k < n; k++) if (Math.abs(trace.coef[i * n + k]) > 1e-12) sv.add(k);
+    render(trace.decision.subarray(i * m, (i + 1) * m), sv, watch.loss);
     scrub.value = String(i);
     const gap = trace.frameGap[i];
-    const text = `frame ${i + 1} of ${trace.frames} · SMO step ${trace.frameStep[i].toLocaleString("en")} · duality gap ${Number.isFinite(gap) ? fmt(gap) : "–"}`;
+    const text = watch.loss === "logistic"
+      ? `frame ${i + 1} of ${trace.frames} · Newton iteration ${trace.frameStep[i]} · optimality ${Number.isFinite(gap) ? fmt(gap) : "–"}`
+      : `frame ${i + 1} of ${trace.frames} · SMO step ${trace.frameStep[i].toLocaleString("en")} · duality gap ${Number.isFinite(gap) ? fmt(gap) : "–"}`;
     watchOut.textContent = text;
     scrub.setAttribute("aria-valuetext", text);
   }
@@ -537,9 +666,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       if (watch !== w) return;
       if (w.frame >= w.trace.frames - 1) return setPlaying(false);
       showFrame(w.frame + 1);
-      w.timer = window.setTimeout(tick, 100);
+      w.timer = window.setTimeout(tick, delay);
     };
-    w.timer = window.setTimeout(tick, 100);
+    const delay = w.loss === "logistic" ? 600 : 100; // only a handful of Newton frames: slow down
+    w.timer = window.setTimeout(tick, delay);
   }
 
   function exitWatch() {
@@ -556,13 +686,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     exitWatch();
     const token = watchToken;
     const { lam, gamma, smoothing } = params();
-    status("Recording the SMO run…");
+    const lossNow = loss;
+    status(loss === "logistic" ? "Recording the Newton run…" : "Recording the SMO run…");
     let trace;
     try {
       trace = await solver.trace({
         x: new Float64Array(snapshot.flatMap((p) => [p.x, p.y])),
         y: new Float64Array(snapshot.map((p) => p.c)),
-        dim: 2, kind: "classification", lambda: lam, gamma, smoothing, epsilon: 0, tol: 1e-3,
+        dim: 2, kind: kindOf(), lambda: lam, gamma, smoothing, epsilon: 0, tol: trainTol(),
         grid: gridPoints(), maxFrames: 60,
       });
     } catch (err) {
@@ -572,17 +703,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       }
       return;
     }
-    if (token !== watchToken) return; // the data changed meanwhile
-    watch = { trace, snapshot, frame: 0, timer: 0, playing: false };
+    if (token !== watchToken || lossNow !== loss) return; // the data or the loss changed meanwhile
+    watch = { trace, snapshot, frame: 0, timer: 0, playing: false, loss: lossNow };
+    const unit = lossNow === "logistic" ? "Newton iterations" : "SMO steps";
     scrub.max = String(trace.frames - 1);
     watchPanel.hidden = false;
     showFrame(0);
     if (reducedMotion()) {
       setPlaying(false);
-      status(`${trace.steps.toLocaleString("en")} SMO steps in ${trace.frames} frames. Use the slider to step through them.`);
+      status(`${trace.steps.toLocaleString("en")} ${unit} in ${trace.frames} frames. Use the slider to step through them.`);
     } else {
       setPlaying(true);
-      status(`Replaying ${trace.steps.toLocaleString("en")} SMO steps in ${trace.frames} frames.`);
+      status(`Replaying ${trace.steps.toLocaleString("en")} ${unit} in ${trace.frames} frames.`);
     }
     scrub.focus();
   }
@@ -607,6 +739,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   });
 
   preset("checkerboard");
+  applyLoss();
   schedule();
 </script>
 
@@ -698,6 +831,31 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--mono);
     font-size: 0.85rem;
     color: var(--accent);
+  }
+  .slider.disabled {
+    opacity: 0.55;
+  }
+  .slider-reason {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin: -0.55rem 0 0.9rem;
+  }
+  .readout {
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    margin: 0.8rem 0 0;
+    padding: 0.4rem 0.7rem;
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    margin: -1px;
   }
   .slider input {
     width: 100%;

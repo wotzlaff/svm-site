@@ -3,11 +3,11 @@ import { transferables } from "./svm-transfer";
 import {
   type SvmCmd, type SvmCommands, type SvmProgress, type SvmTrainArgs, type SvmTrainResult,
   type SvmTuneArgs, type SvmTuneProgress, type SvmTuneResult, type SvmTraceArgs, type SvmTraceResult,
-  type SvmCvArgs, type SvmCvResult,
+  type SvmCvArgs, type SvmCvResult, type SvmKind,
 } from "./svm-core";
 export type {
   SvmTrainArgs, SvmTrainResult, SvmTuneArgs, SvmTuneProgress, SvmTuneResult, SvmTraceArgs, SvmTraceResult,
-  SvmCvArgs, SvmCvResult,
+  SvmCvArgs, SvmCvResult, SvmKind,
 };
 
 /** Rejection reason of a request that was replaced by a newer one of the same command. */

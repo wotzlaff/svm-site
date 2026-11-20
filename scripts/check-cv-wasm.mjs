@@ -43,6 +43,38 @@ for (const c of cases) {
 console.log(`max relative error: ${worst.toExponential(2)}`);
 assert.ok(worst <= 1e-5, "relative error above 1e-5");
 
+// full-data logistic fits: decision values on the fixture's test points and bias against the oracle
+function fit(c, f, tol = 1e-8) {
+  const n = c.y.length, m = c.test_points.length / c.dim;
+  const bufs = [];
+  const put = (arr) => {
+    const p = e.alloc(Math.max(arr.length, 1));
+    bufs.push([p, Math.max(arr.length, 1)]);
+    new Float64Array(e.memory.buffer, p, arr.length).set(arr);
+    return p;
+  };
+  const px = put(c.x), py = put(c.y), pt = put(c.test_points), po = put(new Float64Array(m));
+  try {
+    const steps = Number(e.train(px, n, c.dim, py, c.kind, Math.exp(f.log_lambda), Math.exp(f.log_gamma), c.smoothing, c.epsilon, tol));
+    assert.ok(steps >= 0, `train status ${steps}`);
+    e.decision(pt, m, po);
+    return { steps, bias: e.stat(0), decision: Array.from(new Float64Array(e.memory.buffer, po, m)) };
+  } finally {
+    for (const [p, l] of bufs) e.dealloc(p, l);
+  }
+}
+let worstFit = 0;
+for (const c of cases.filter((c) => c.fits)) {
+  for (const f of c.fits) {
+    const r = fit(c, f);
+    const errs = [rel(r.bias, f.bias), ...f.decision.map((d, i) => rel(r.decision[i], d))];
+    worstFit = Math.max(worstFit, ...errs);
+    console.log(`${c.name.padEnd(20)} fit (${f.log_lambda}, ${f.log_gamma})  ${r.steps} Newton steps (oracle ${f.newton_steps})  bias ${r.bias.toFixed(6)}  rel.err ${Math.max(...errs).toExponential(1)}`);
+  }
+}
+console.log(`max relative error of the full-data fits: ${worstFit.toExponential(2)}`);
+assert.ok(worstFit <= 1e-5, "full-data fit error above 1e-5");
+
 // vendored optimizer on the CV objective of the moons data (delta = 0.3, bounds as the demo sliders)
 const optimizer = await createOptimizer(await readFile(new URL("../public/wasm/svm_browser_optimizer_bg.wasm", import.meta.url)));
 const moons = cases.find((c) => c.name === "moons-hinge");

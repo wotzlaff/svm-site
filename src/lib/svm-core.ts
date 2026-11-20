@@ -1,14 +1,21 @@
 // Solver core shared by the Web Worker (svm-worker.ts) and the main-thread fallback (svm-client.ts).
 // It has no DOM dependencies. New commands are added to `commands` and to the `SvmCommands` type.
 
+export type SvmKind = "classification" | "regression" | "logistic";
+
 export type SvmTrainArgs = {
   /** Row-major samples, `n * dim` values. */
   x: Float64Array;
   /** Targets (labels +-1 for classification), `n` values. */
   y: Float64Array;
   dim: number;
-  /** "classification" or "regression" (epsilon-SVR). */
-  kind: "classification" | "regression";
+  /**
+   * "classification" (hinge loss), "regression" (epsilon-SVR) or "logistic" (kernel logistic regression,
+   * labels +-1, dense Newton). For "logistic" the decision function is the logit f (P(+1) = 1 / (1 + e^-f)),
+   * `smoothing` and `epsilon` are ignored, `tol` is on the optimality norm (use about 1e-8) and
+   * `steps`/`gap` are Newton iterations / the final optimality norm.
+   */
+  kind: SvmKind;
   lambda: number;
   gamma: number;
   smoothing: number;
@@ -37,7 +44,7 @@ export type SvmCvArgs = {
   x: Float64Array;
   y: Float64Array;
   dim: number;
-  kind: "classification" | "regression";
+  kind: SvmKind;
   /** Number of folds (assignment: `makeFolds`, deterministic). */
   folds: number;
   /** Natural logarithms of lambda and gamma. */
@@ -195,6 +202,9 @@ function scope(e: Exports) {
   };
 }
 
+const kindCode = (k: SvmKind) => (k === "regression" ? 1 : k === "logistic" ? 2 : 0);
+const stratified = (k: SvmKind) => k !== "regression";
+
 function train(e: Exports, a: SvmTrainArgs): SvmTrainResult {
   const n = a.y.length, m = a.grid.length / a.dim;
   const { buf, free } = scope(e);
@@ -206,7 +216,7 @@ function train(e: Exports, a: SvmTrainArgs): SvmTrainResult {
     new Float64Array(e.memory.buffer, pg, m * a.dim).set(a.grid);
     const t0 = performance.now();
     const steps = Number(
-      e.train(px, n, a.dim, py, a.kind === "regression" ? 1 : 0, a.lambda, a.gamma, a.smoothing, a.epsilon, a.tol),
+      e.train(px, n, a.dim, py, kindCode(a.kind), a.lambda, a.gamma, a.smoothing, a.epsilon, a.tol),
     );
     const seconds = (performance.now() - t0) / 1000;
     if (steps < 0) {
@@ -239,7 +249,7 @@ function cv(e: Exports, a: SvmCvArgs, foldOf: Float64Array): SvmCvResult {
     new Float64Array(e.memory.buffer, py, n).set(a.y);
     new Float64Array(e.memory.buffer, pf, n).set(foldOf);
     const t0 = performance.now();
-    const status = e.cv_objective(px, n, a.dim, py, pf, a.folds, a.kind === "regression" ? 1 : 0,
+    const status = e.cv_objective(px, n, a.dim, py, pf, a.folds, kindCode(a.kind),
                                   a.logLambda, a.logGamma, a.smoothing, a.epsilon, a.tol, po);
     const seconds = (performance.now() - t0) / 1000;
     if (status !== 0) throw new Error(`cv_objective failed (status ${status})`);
@@ -253,7 +263,7 @@ function cv(e: Exports, a: SvmCvArgs, foldOf: Float64Array): SvmCvResult {
 async function tune(e: Exports, optimizerUrl: string, a: SvmTuneArgs, emit: Emit): Promise<SvmTuneResult> {
   const { createOptimizer } = await import("./vendor/browser-optimizer/optimizer.mjs");
   const optimizer = await createOptimizer(optimizerUrl);
-  const foldOf = makeFolds(a.y, a.folds, a.kind === "classification");
+  const foldOf = makeFolds(a.y, a.folds, stratified(a.kind));
   const trainArgs = (logLambda: number, logGamma: number): SvmTrainArgs => ({
     x: a.x, y: a.y, dim: a.dim, kind: a.kind, lambda: Math.exp(logLambda), gamma: Math.exp(logGamma),
     smoothing: a.smoothing, epsilon: a.epsilon, tol: a.trainTol, grid: a.grid,
@@ -304,11 +314,12 @@ function trace(e: Exports, a: SvmTraceArgs): SvmTraceResult {
     new Float64Array(e.memory.buffer, px, n * a.dim).set(a.x);
     new Float64Array(e.memory.buffer, py, n).set(a.y);
     new Float64Array(e.memory.buffer, pg, m * a.dim).set(a.grid);
-    const kind = a.kind === "regression" ? 1 : 0;
+    const kind = kindCode(a.kind);
     const run = (period: number) =>
       Number(e.train_trace(px, n, a.dim, py, kind, a.lambda, a.gamma, a.smoothing, a.epsilon, a.tol, period, a.maxFrames));
     const t0 = performance.now();
-    // first pass with period 1 and a tiny frame budget only measures the number of steps
+    // first pass with a huge period only measures the number of steps (SMO steps, or Newton iterations: typically 4-10,
+    // which gives period 1, i.e. every iteration is a frame)
     let steps = run(1 << 30);
     if (steps < 0) throw new Error(`train_trace failed (status ${steps})`);
     let period = Math.max(1, Math.ceil(steps / (a.maxFrames - 1)));
@@ -363,7 +374,7 @@ export function createSolverCore() {
           return train(need(), args as SvmTrainArgs);
         case "cv": {
           const a = args as SvmCvArgs;
-          return cv(need(), a, makeFolds(a.y, a.folds, a.kind === "classification"));
+          return cv(need(), a, makeFolds(a.y, a.folds, stratified(a.kind)));
         }
         case "tune":
           return tune(need(), optimizerUrl, args as SvmTuneArgs, emit);

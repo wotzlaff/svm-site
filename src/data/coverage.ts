@@ -31,7 +31,7 @@ export const coverage: Group[] = [
       { ref: "4.1.2", topic: "Maximal margin classifier", status: "done",
         note: "MaximalMarginLoss and loss=\"hard_margin\" in SmoothSVC/OptimizedSVC (optimized-svm 0.6.0): direct constrained QP with feasibility and KKT checks, no finite soft-margin approximation. Active-set hypergradient for kernel scalings; positive λ leaves predictions unchanged. Dense solver for moderate n; interactive hard/soft comparison on Explore." },
       { ref: "4.1.3", topic: "Logistic-regression SVM", status: "done",
-        note: "LogisticLoss and loss=\"logistic\" in optimized-svm, with predict_proba. Trained by Newton's method only: no SMO, dense solution, so best for moderate n." },
+        note: "LogisticLoss and loss=\"logistic\" in optimized-svm, with predict_proba. Trained by Newton's method only: no SMO, dense solution, so best for moderate n. The home-page demo trains it in the browser (WebAssembly, Newton)." },
       { ref: "4.2.1", topic: "Least-squares SVM", status: "done",
         note: "smo-solver: solve_least_squares; optimized-svm: SquaredLoss (closed-form reference in the tests)." },
       { ref: "4.2.2", topic: "ε-support vector regression", status: "done",
