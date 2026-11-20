@@ -3,11 +3,12 @@ import { transferables } from "./svm-transfer";
 import {
   type SvmCmd, type SvmCommands, type SvmProgress, type SvmTrainArgs, type SvmTrainResult,
   type SvmTuneArgs, type SvmTuneProgress, type SvmTuneResult, type SvmTraceArgs, type SvmTraceResult,
-  type SvmCvArgs, type SvmCvResult, type SvmKind,
+  type SvmCvArgs, type SvmCvResult, type SvmKind, type SvmTuneArdArgs, type SvmTuneArdProgress,
+  type SvmTuneArdResult, type SvmFitArdArgs, type SvmFitArdResult,
 } from "./svm-core";
 export type {
   SvmTrainArgs, SvmTrainResult, SvmTuneArgs, SvmTuneProgress, SvmTuneResult, SvmTraceArgs, SvmTraceResult,
-  SvmCvArgs, SvmCvResult, SvmKind,
+  SvmCvArgs, SvmCvResult, SvmKind, SvmTuneArdArgs, SvmTuneArdProgress, SvmTuneArdResult, SvmFitArdArgs, SvmFitArdResult,
 };
 
 /** Rejection reason of a request that was replaced by a newer one of the same command. */
@@ -210,6 +211,16 @@ export class SvmClient {
   /** L-BFGS-B over (log lambda, log gamma); `onProgress` receives every objective evaluation. */
   tune(a: SvmTuneArgs, onProgress: (p: SvmProgress["tune"]) => void): Promise<SvmTuneResult> {
     return this.call("tune", a, transferables(a), onProgress as (p: unknown) => void);
+  }
+
+  /** L-BFGS-B over (log lambda, log gamma_1..gamma_dim) (ARD); `onProgress` receives every objective evaluation. */
+  tuneArd(a: SvmTuneArdArgs, onProgress: (p: SvmProgress["tuneArd"]) => void): Promise<SvmTuneArdResult> {
+    return this.call("tuneArd", a, transferables(a), onProgress as (p: unknown) => void);
+  }
+
+  /** Trains with per-feature kernel widths and returns the decision values on `test`. */
+  fitArd(a: SvmFitArdArgs): Promise<SvmFitArdResult> {
+    return this.call("fitArd", a, transferables(a));
   }
 
   /** Records an SMO run (at most `maxFrames` frames) with the decision function of every frame. */

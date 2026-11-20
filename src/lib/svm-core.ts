@@ -95,6 +95,48 @@ export type SvmTuneResult = {
   final: SvmTrainResult;
 };
 
+/** ARD tuning: one RBF width per feature, L-BFGS-B over (log lambda, log gamma_1..gamma_dim). */
+export type SvmTuneArdArgs = Omit<SvmTuneArgs, "initial" | "lower" | "upper" | "grid" | "trainTol"> & {
+  /** Start point and box bounds in natural logs: [log lambda, log gamma_1, ..., log gamma_dim]. */
+  initial: Float64Array;
+  lower: Float64Array;
+  upper: Float64Array;
+};
+/** Streamed once per objective evaluation. */
+export type SvmTuneArdProgress = {
+  evaluation: number;
+  logLambda: number;
+  logGammas: Float64Array;
+  value: number;
+  /** [d/dlog lambda, d/dlog gamma_1, ...] */
+  gradient: Float64Array;
+};
+export type SvmTuneArdResult = {
+  logLambda: number;
+  logGammas: Float64Array;
+  value: number;
+  iterations: number;
+  evaluations: number;
+  status: string;
+  seconds: number;
+};
+
+/** Trains with one RBF width per feature and evaluates the decision function on `test`. */
+export type SvmFitArdArgs = {
+  x: Float64Array;
+  y: Float64Array;
+  dim: number;
+  kind: SvmKind;
+  lambda: number;
+  /** `dim` values (all equal = ordinary isotropic RBF kernel). */
+  gammas: Float64Array;
+  smoothing: number;
+  epsilon: number;
+  tol: number;
+  test: Float64Array;
+};
+export type SvmFitArdResult = { steps: number; decisionOnTest: Float64Array; seconds: number };
+
 export type SvmTraceArgs = SvmTrainArgs & {
   /** Upper bound of the number of frames (including the initial and the final one). */
   maxFrames: number;
@@ -122,9 +164,11 @@ export type SvmCommands = {
   cv: [SvmCvArgs, SvmCvResult];
   tune: [SvmTuneArgs, SvmTuneResult];
   trace: [SvmTraceArgs, SvmTraceResult];
+  tuneArd: [SvmTuneArdArgs, SvmTuneArdResult];
+  fitArd: [SvmFitArdArgs, SvmFitArdResult];
 };
 /** Progress payload type per command (commands without an entry never stream). */
-export type SvmProgress = { tune: SvmTuneProgress };
+export type SvmProgress = { tune: SvmTuneProgress; tuneArd: SvmTuneArdProgress };
 export type SvmCmd = keyof SvmCommands;
 
 type Exports = {
@@ -139,6 +183,9 @@ type Exports = {
   cv_objective(x: number, n: number, dim: number, y: number, foldOf: number, k: number, kind: number,
                logLambda: number, logGamma: number, smoothing: number, epsilon: number, tol: number,
                out: number): number;
+  cv_objective_ard(x: number, n: number, dim: number, y: number, foldOf: number, k: number, kind: number,
+                   logLambda: number, logGammas: number, smoothing: number, epsilon: number, tol: number,
+                   out: number): number;
   train_trace(x: number, n: number, dim: number, y: number, kind: number, lam: number, gamma: number,
               smoothing: number, epsilon: number, tol: number, period: number, maxFrames: number): bigint;
   trace_len(): bigint;
@@ -306,6 +353,83 @@ async function tune(e: Exports, optimizerUrl: string, a: SvmTuneArgs, emit: Emit
            evaluations: r.evaluations, status: r.status, seconds: (performance.now() - t0) / 1000, final };
 }
 
+/** Calls `cv_objective_ard`; returns [value, d/dlog lambda, d/dlog gamma_1..dim]. */
+function cvArd(e: Exports, a: SvmTuneArdArgs, theta: ArrayLike<number>, foldOf: Float64Array): Float64Array {
+  const n = a.y.length, { dim } = a;
+  const { buf, free } = scope(e);
+  try {
+    const px = buf(n * dim), py = buf(n), pf = buf(n), pg = buf(dim), po = buf(2 + dim);
+    new Float64Array(e.memory.buffer, px, n * dim).set(a.x);
+    new Float64Array(e.memory.buffer, py, n).set(a.y);
+    new Float64Array(e.memory.buffer, pf, n).set(foldOf);
+    const g = new Float64Array(e.memory.buffer, pg, dim);
+    for (let d = 0; d < dim; d++) g[d] = theta[1 + d];
+    const status = e.cv_objective_ard(px, n, dim, py, pf, a.folds, kindCode(a.kind), theta[0], pg,
+                                      a.smoothing, a.epsilon, a.tol, po);
+    if (status !== 0) throw new Error(`cv_objective_ard failed (status ${status})`);
+    return new Float64Array(new Float64Array(e.memory.buffer, po, 2 + dim));
+  } finally {
+    free();
+  }
+}
+
+async function tuneArd(e: Exports, optimizerUrl: string, a: SvmTuneArdArgs, emit: Emit): Promise<SvmTuneArdResult> {
+  const { createOptimizer } = await import("./vendor/browser-optimizer/optimizer.mjs");
+  const optimizer = await createOptimizer(optimizerUrl);
+  const foldOf = makeFolds(a.y, a.folds, stratified(a.kind));
+  let evaluation = 0;
+  let best = { value: Infinity, x: Float64Array.from(a.initial) };
+  const t0 = performance.now();
+  const budget = new Error("evaluation limit");
+  const solverFailure = new Error("solver failure");
+  let r: { x: ArrayLike<number>; value: number; iterations: number; evaluations: number; status: string };
+  try {
+    r = optimizer.minimize({
+      initial: a.initial, lower: a.lower, upper: a.upper,
+      maxIterations: a.maxIterations, gradientTolerance: a.gradientTolerance,
+      evaluate: (theta: Float64Array) => {
+        if (evaluation >= a.maxEvaluations) throw budget;
+        let o: Float64Array;
+        try {
+          o = cvArd(e, a, theta, foldOf);
+        } catch (err) {
+          if (evaluation > 0) throw solverFailure;
+          throw err;
+        }
+        if (o[0] < best.value) best = { value: o[0], x: Float64Array.from(theta) };
+        const gradient = o.slice(1);
+        emit({ evaluation: ++evaluation, logLambda: theta[0], logGammas: Float64Array.from(theta.subarray(1)),
+               value: o[0], gradient: gradient.slice() } satisfies SvmTuneArdProgress); // a copy: posting transfers (detaches) the buffer
+        return { value: o[0], gradient };
+      },
+    });
+  } catch (err) {
+    if (err !== budget && err !== solverFailure) throw err;
+    r = { x: best.x, value: best.value, iterations: NaN, evaluations: evaluation,
+          status: err === budget ? "evaluation-limit" : "solver-failure" };
+  }
+  const xs = Float64Array.from(r.x);
+  return { logLambda: xs[0], logGammas: xs.slice(1), value: r.value, iterations: r.iterations,
+           evaluations: r.evaluations, status: r.status, seconds: (performance.now() - t0) / 1000 };
+}
+
+/** Scales feature d by sqrt(gamma_d), so that the RBF kernel with gamma = 1 is the ARD kernel. */
+function scaleFeatures(v: Float64Array, dim: number, gammas: Float64Array): Float64Array {
+  const out = new Float64Array(v.length);
+  const s = Float64Array.from(gammas, Math.sqrt);
+  for (let i = 0; i < v.length; i++) out[i] = v[i] * s[i % dim];
+  return out;
+}
+
+function fitArd(e: Exports, a: SvmFitArdArgs): SvmFitArdResult {
+  const r = train(e, {
+    x: scaleFeatures(a.x, a.dim, a.gammas), y: a.y, dim: a.dim, kind: a.kind, lambda: a.lambda, gamma: 1,
+    smoothing: a.smoothing, epsilon: a.epsilon, tol: a.tol, grid: scaleFeatures(a.test, a.dim, a.gammas),
+  });
+  if (r.steps < 0) throw new Error(`train failed (status ${r.steps})`);
+  return { steps: r.steps, decisionOnTest: r.decisionOnGrid, seconds: r.seconds };
+}
+
 function trace(e: Exports, a: SvmTraceArgs): SvmTraceResult {
   const n = a.y.length, m = a.grid.length / a.dim;
   const { buf, free } = scope(e);
@@ -378,6 +502,10 @@ export function createSolverCore() {
         }
         case "tune":
           return tune(need(), optimizerUrl, args as SvmTuneArgs, emit);
+        case "tuneArd":
+          return tuneArd(need(), optimizerUrl, args as SvmTuneArdArgs, emit);
+        case "fitArd":
+          return fitArd(need(), args as SvmFitArdArgs);
         case "trace":
           return trace(need(), args as SvmTraceArgs);
         default:

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createOptimizer } from "../src/lib/vendor/browser-optimizer/optimizer.mjs";
 
-const fixturePath = process.argv[2] ?? "/home/nico/svm/repos/smo-wasm-hpo/crates/smo-solver-wasm/tests/cv_fixture.json";
+const fixturePath = process.argv[2] ?? new URL("../../smo-solver/crates/smo-solver-wasm/tests/cv_fixture.json", import.meta.url).pathname;
 const cases = JSON.parse(await readFile(fixturePath, "utf8"));
 const { instance } = await WebAssembly.instantiate(
   await readFile(new URL("../public/wasm/smo_solver_wasm.wasm", import.meta.url)), {});
@@ -30,10 +30,37 @@ function cv(c, logLambda, logGamma, tol = 1e-8) {
   }
 }
 
+// ARD variant: one width per feature; returns [value, d/dlog lambda, d/dlog gamma_1..dim]
+function cvArd(c, logLambda, logGammas, tol = 1e-8) {
+  const n = c.y.length;
+  const bufs = [];
+  const put = (arr) => {
+    const p = e.alloc(Math.max(arr.length, 1));
+    bufs.push([p, Math.max(arr.length, 1)]);
+    new Float64Array(e.memory.buffer, p, arr.length).set(arr);
+    return p;
+  };
+  const px = put(c.x), py = put(c.y), pf = put(c.fold_of), pg = put(logGammas), po = put(new Float64Array(2 + c.dim));
+  try {
+    const status = e.cv_objective_ard(px, n, c.dim, py, pf, c.k, c.kind, logLambda, pg, c.smoothing, c.epsilon, tol, po);
+    assert.equal(status, 0, `cv_objective_ard status ${status}`);
+    return Array.from(new Float64Array(e.memory.buffer, po, 2 + c.dim));
+  } finally {
+    for (const [p, l] of bufs) e.dealloc(p, l);
+  }
+}
+
 const rel = (a, b) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-3);
 let worst = 0;
 for (const c of cases) {
   for (const p of c.points) {
+    if (c.ard) {
+      const o = cvArd(c, p.log_lambda, p.log_gammas);
+      const errs = o.map((v, i) => rel(v, i === 0 ? p.value : i === 1 ? p.grad_log_lambda : p.grad_log_gammas[i - 2]));
+      worst = Math.max(worst, ...errs);
+      console.log(`${c.name.padEnd(20)} (${p.log_lambda}, ${p.log_gammas.length} widths)  value ${o[0].toFixed(6)}  rel.err ${Math.max(...errs).toExponential(1)}`);
+      continue;
+    }
     const [v, gl, gg] = cv(c, p.log_lambda, p.log_gamma);
     const errs = [rel(v, p.value), rel(gl, p.grad_log_lambda), rel(gg, p.grad_log_gamma)];
     worst = Math.max(worst, ...errs);

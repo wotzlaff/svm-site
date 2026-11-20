@@ -1,55 +1,106 @@
 ---
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
-<div class="ard card explainer" data-src={`${base}/data/ard-path.json`}>
+<div class="ard card explainer" data-src={`${base}/data/ard-path.json`} data-wasm={`${base}/wasm/smo_solver_wasm.wasm`}>
   <div>
     <svg class="plot" viewBox="0 0 560 340" role="img" aria-labelledby="ard-title ard-desc">
-      <title id="ard-title">Optimized kernel scalings per feature</title>
-      <desc id="ard-desc">Bar chart of the logarithm of the kernel scaling of each of eight features during the optimization. The three informative features keep a large scaling while the five noise features shrink towards zero.</desc>
+      <title id="ard-title">Optimized kernel widths per feature</title>
+      <desc id="ard-desc">Bar chart of the logarithm of the kernel width γ of each feature during the optimization. The informative features keep a large width while the noise features shrink towards zero.</desc>
     </svg>
-    <p class="hint">Blue: features that enter the function; grey: pure noise. Synthetic data y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise with five additional noise features; one run (fixed seed, n = 400).</p>
+    <p class="hint" data-hint>Blue: features that enter the function; grey: pure noise. Shown: a precomputed run (Python reference implementation) on synthetic data y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise with five additional noise features (n = 400).</p>
   </div>
   <div>
-    <div class="btn-row" style="margin-top: 0">
-      <button class="btn small primary" data-play type="button">▶ Replay</button>
+    <fieldset class="live" data-live>
+      <legend>Run it live in your browser</legend>
+      <div class="live-row">
+        <label for="ard-task">Task</label>
+        <select id="ard-task" data-task>
+          <option value="classification">Classification (noisy circle)</option>
+          <option value="regression">Regression (Friedman #1)</option>
+        </select>
+      </div>
+      <label class="slider" style="margin: 0.7rem 0 0">
+        <span>Noise features <output data-out="noise">5</output></span>
+        <input type="range" min="0" max="8" step="1" value="5" data-noise />
+      </label>
+      <div class="btn-row">
+        <button class="btn small primary" type="button" data-run>Run live</button>
+        <button class="btn small" type="button" data-stop hidden>Stop</button>
+        <button class="btn small" type="button" data-newdata>New data</button>
+        <span class="seed">seed <output data-seed>1</output></span>
+      </div>
+      <p class="tune-status" data-status>Not started. The picture shows the precomputed run.</p>
+      <p class="sr-only" role="status" aria-live="polite" data-live-status></p>
+    </fieldset>
+    <div class="btn-row" style="margin-top: 0.9rem">
+      <button class="btn small" data-play type="button">▶ Replay</button>
     </div>
-    <label class="slider" style="margin-top: 0.9rem">
+    <label class="slider" style="margin-top: 0.7rem">
       <span>Evaluation <output data-out="step"></output></span>
       <input type="range" min="0" max="0" step="1" value="0" data-param="step" />
     </label>
-    <dl class="stats" aria-live="polite">
-      <div><dt>CV error</dt><dd data-stat="err">–</dd></div>
+    <dl class="stats">
+      <div><dt data-label="err">CV error</dt><dd data-stat="err">–</dd></div>
       <div><dt>log₁₀ λ</dt><dd data-stat="lam">–</dd></div>
     </dl>
-    <p class="note">
-      Automatic relevance determination gives every feature its own kernel scaling and tunes all of them by
-      gradient descent. A scaling near zero switches a feature off. Here the optimizer needs a few dozen
-      CV evaluations for eight scalings; a grid over eight dimensions is out of the question. The
+    <div class="result" data-result hidden>
+      <table>
+        <caption data-result-caption>Held-out test set</caption>
+        <thead><tr><th scope="col">Model</th><th scope="col" data-metric-head>Accuracy</th><th scope="col">CV loss</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">One width per feature</th><td data-res="ard-test">–</td><td data-res="ard-cv">–</td></tr>
+          <tr><th scope="row">Single width</th><td data-res="iso-test">–</td><td data-res="iso-cv">–</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note" data-note>
+      Automatic relevance determination gives every feature its own kernel width and tunes all of them by
+      gradient descent. A width near zero switches a feature off. Here the optimizer needs a few dozen
+      CV evaluations for eight widths; a grid over eight dimensions is out of the question. The
       adjoint gradient costs the same for one hyperparameter or for hundreds.
+    </p>
+    <p class="note" data-live-note>
+      <strong>Run live</strong> generates a fresh data set and tunes λ and all per-feature widths γ<sub>d</sub> with
+      L-BFGS-B on the 5-fold CV loss, in a Web Worker (log₁₀ γ<sub>d</sub> between −4 and 2). It then tunes one
+      common width the same way and compares both on 1000 held-out test points. To keep a run within a few seconds,
+      the live data are smaller than the precomputed ones: n = 240 (classification, logistic loss) or n = 160
+      (regression, ε-SVR with ε = 0.1 on standardized targets and smoothing δ = 0.2, which the exact gradient needs).
+      Labels are flipped with probability 8 %; the radius of the circle is chosen so that the classes are balanced.
     </p>
   </div>
 </div>
 
 <script>
   import { observeWidth, onTheme } from "../lib/plot";
+  import { makeArdData, testMetric, type ArdData, type ArdTask } from "../lib/ard-data";
+  import { getSvmClient, SvmCancelledError, type SvmKind, type SvmTuneArdProgress } from "../lib/svm-client";
+  import { createPacer } from "../lib/tune-ui";
 
+  type Iterate = { error: number; log10_scaling: number[]; log10_lam: number };
   type Data = {
     n_features: number;
     relevant: number[];
-    iterates: { error: number; log10_scaling: number[]; log10_lam: number }[];
+    iterates: Iterate[];
+    /** Axis and labels; the precomputed replay uses the defaults. */
+    top?: number;
+    axisLabel?: string;
+    errLabel?: string;
   };
   const root = document.querySelector<HTMLElement>(".ard")!;
+  const q = <T extends HTMLElement = HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
   const svg = root.querySelector("svg")!;
-  const slider = root.querySelector<HTMLInputElement>("[data-param=step]")!;
-  const playBtn = root.querySelector<HTMLButtonElement>("[data-play]")!;
+  const slider = q<HTMLInputElement>("[data-param=step]");
+  const playBtn = q<HTMLButtonElement>("[data-play]");
   const NS = "http://www.w3.org/2000/svg";
+  const LN10 = Math.LN10;
   let W = 560, H = 340;
   const M = { l: 56, r: 14, t: 14, b: 50 };
   const FLOOR = -4; // log10 scaling shown at the bottom
   let data: Data;
+  let replay: Data;
   let step = 0;
   let timer = 0;
-  const names = ["x₁", "x₂", "x₃", "x₄", "x₅", "x₆", "x₇", "x₈"];
+  const names = (n: number) => Array.from({ length: n }, (_, k) => "x" + String(k + 1).replace(/\d/g, (c) => "₀₁₂₃₄₅₆₇₈₉"[+c]));
 
   function el<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, text?: string) {
     const e = document.createElementNS(NS, tag);
@@ -62,27 +113,28 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     H = Math.round(Math.min(340, Math.max(270, W * 0.62)));
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const p = data.iterates[step];
-    const lo = FLOOR, hi = 0.5;
+    const lo = FLOOR, hi = data.top ?? 0.5;
     const py = (v: number) => H - M.b - ((Math.max(v, lo) - lo) / (hi - lo)) * (H - M.t - M.b);
     const bw = (W - M.l - M.r) / data.n_features;
+    const nm = names(data.n_features);
     svg.replaceChildren(svg.querySelector("title")!, svg.querySelector("desc")!);
-    for (let v = lo; v <= 0; v++) {
+    for (let v = lo; v <= hi; v++) {
       svg.append(el("line", { x1: M.l, x2: W - M.r, y1: py(v), y2: py(v), class: "grid" }));
       svg.append(el("text", { x: M.l - 6, y: py(v) + 3, class: "tick", "text-anchor": "end" }, v === lo ? `≤ 1e${v}` : `1e${v}`));
     }
-    svg.append(el("text", { x: 14, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 14 ${M.t + (H - M.t - M.b) / 2})` }, "kernel scaling s"));
+    svg.append(el("text", { x: 14, y: M.t + (H - M.t - M.b) / 2, class: "lbl", "text-anchor": "middle", transform: `rotate(-90 14 ${M.t + (H - M.t - M.b) / 2})` }, data.axisLabel ?? "kernel scaling s"));
     p.log10_scaling.forEach((v, k) => {
       const rel = data.relevant.includes(k);
       const x = M.l + k * bw + bw * 0.18, w = bw * 0.64;
       const y = py(v);
       svg.append(el("rect", { x, y, width: w, height: Math.max(H - M.b - y, 1), class: rel ? "bar rel" : "bar" }));
-      svg.append(el("text", { x: x + w / 2, y: H - M.b + 17, class: "tick", "text-anchor": "middle" }, names[k]));
-      svg.append(el("text", { x: x + w / 2, y: H - M.b + 31, class: "tick small", "text-anchor": "middle" }, rel ? "signal" : "noise"));
+      svg.append(el("text", { x: x + w / 2, y: H - M.b + 17, class: "tick", "text-anchor": "middle" }, nm[k]));
+      if (bw >= 34) svg.append(el("text", { x: x + w / 2, y: H - M.b + 31, class: "tick small", "text-anchor": "middle" }, rel ? "signal" : "noise"));
     });
     slider.value = String(step);
-    root.querySelector("[data-out=step]")!.textContent = `${step + 1} / ${data.iterates.length}`;
-    root.querySelector("[data-stat=err]")!.textContent = p.error.toFixed(4);
-    root.querySelector("[data-stat=lam]")!.textContent = p.log10_lam.toFixed(2);
+    q("[data-out=step]").textContent = `${step + 1} / ${data.iterates.length}`;
+    q("[data-stat=err]").textContent = p.error.toFixed(4);
+    q("[data-stat=lam]").textContent = p.log10_lam.toFixed(2);
   }
 
   function stop() {
@@ -114,11 +166,196 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   fetch(root.dataset.src!)
     .then((r) => r.json())
     .then((d: Data) => {
-      data = d;
+      // the reference stores log10 of the scaling s with K = exp(-|s ⊙ (x - z)|²), i.e. γ = s²:
+      // show the per-feature width γ like the live run
+      d = { ...d, top: 3, axisLabel: "kernel width γ (per feature)",
+            iterates: d.iterates.map((it) => ({ ...it, log10_scaling: it.log10_scaling.map((v) => 2 * v) })) };
+      data = replay = d;
       step = d.iterates.length - 1;
       slider.max = String(step);
       draw();
     });
+
+  // ---- live run (nothing below touches the network or the worker until "Run live" is pressed) ----
+  const taskSel = q<HTMLSelectElement>("[data-task]");
+  const noiseIn = q<HTMLInputElement>("[data-noise]");
+  const runBtn = q<HTMLButtonElement>("[data-run]");
+  const stopBtn = q<HTMLButtonElement>("[data-stop]");
+  const newBtn = q<HTMLButtonElement>("[data-newdata]");
+  const statusEl = q("[data-status]");
+  const liveStatus = q("[data-live-status]");
+  const resultEl = q("[data-result]");
+  let seed = 1;
+  let busy = false;
+  let stopped = false;
+  let lastAnnounce = -Infinity;
+
+  /** Per-task defaults, chosen from timings of the wasm solver (see the note text). */
+  const CFG: Record<ArdTask, {
+    kind: SvmKind; n: number; nTest: number; tol: number; smoothing: number; epsilon: number;
+    logLam0: number; maxEvaluations: number; label: string; metric: string;
+  }> = {
+    classification: { kind: "logistic", n: 240, nTest: 1000, tol: 1e-8, smoothing: 0, epsilon: 0, logLam0: -2,
+                      maxEvaluations: 40, label: "CV log loss", metric: "Test accuracy" },
+    regression: { kind: "regression", n: 160, nTest: 1000, tol: 1e-3, smoothing: 0.2, epsilon: 0.1, logLam0: -2,
+                  maxEvaluations: 40, label: "CV loss", metric: "Test RMSE" },
+  };
+  const LOG10_GAMMA: [number, number] = [-4, 2];
+  const LOG10_LAM: [number, number] = [-5, 1];
+
+  const setStatus = (t: string) => (statusEl.textContent = t);
+  const announce = (t: string, force = false) => {
+    const now = performance.now();
+    if (!force && now - lastAnnounce < 3000) return;
+    lastAnnounce = now;
+    liveStatus.textContent = t;
+  };
+  const sync = () => (q("[data-out=noise]").textContent = noiseIn.value);
+  noiseIn.addEventListener("input", sync);
+  newBtn.addEventListener("click", () => {
+    seed = 1 + Math.floor(Math.random() * 9999);
+    q("[data-seed]").textContent = String(seed);
+    setStatus(`New data (seed ${seed}); press Run live.`);
+  });
+
+  function setBusy(on: boolean) {
+    busy = on;
+    for (const c of [taskSel, noiseIn, runBtn, newBtn]) c.disabled = on;
+    stopBtn.hidden = !on;
+    playBtn.disabled = on;
+    slider.disabled = on;
+    q("[data-live]").setAttribute("aria-busy", String(on));
+  }
+
+  async function run() {
+    if (busy) return;
+    const task = taskSel.value as ArdTask;
+    const cfg = CFG[task];
+    const noise = Number(noiseIn.value);
+    const d: ArdData = makeArdData(task, noise, cfg.n, cfg.nTest, seed);
+    const { dim } = d;
+    const solver = getSvmClient(root.dataset.wasm!);
+    stop();
+    resultEl.hidden = true;
+    q("[data-note]").hidden = true;
+    q("[data-live-note]").hidden = false;
+    q("[data-label=err]").textContent = cfg.label;
+    stopped = false;
+    setBusy(true);
+    stopBtn.focus();
+    const live: Data = {
+      n_features: dim, relevant: Array.from({ length: d.informative }, (_, k) => k), iterates: [],
+      top: LOG10_GAMMA[1], axisLabel: "kernel width γ (per feature)", errLabel: cfg.label,
+    };
+    data = live;
+    slider.max = "0";
+    q("[data-hint]").textContent =
+      `Live: ${task === "classification" ? "noisy circle, label = inside or outside a disc of the first two features, 8 % flipped labels" : "Friedman #1 with three informative features: y = 10 sin(π x₁ x₂) + 20 (x₃ − ½)² + noise"}, ` +
+      `${noise} noise feature${noise === 1 ? "" : "s"}, n = ${cfg.n} (seed ${seed}). Blue: informative; grey: noise.`;
+    const t0 = performance.now();
+    let evals = 0;
+    let latest = { value: NaN, ll: NaN };
+    const pacer = createPacer<SvmTuneArdProgress>((pr) => {
+      live.iterates.push({ error: pr.value, log10_scaling: Array.from(pr.logGammas, (v) => v / LN10), log10_lam: pr.logLambda / LN10 });
+      step = live.iterates.length - 1;
+      draw();
+      announce(`Evaluation ${pr.evaluation}, CV loss ${pr.value.toFixed(3)}.`);
+      setStatus(`Tuning one width per feature… evaluation ${pr.evaluation} of at most ${cfg.maxEvaluations}.`);
+    });
+    const copy = () => ({ x: d.x.slice(), y: d.y.slice() });
+    try {
+      // a trivial request first: it starts the worker, so that a main-thread fallback is known before the long run
+      await solver.train({
+        x: new Float64Array([0, 0, 1, 1]), y: new Float64Array([-1, 1]), dim: 2, kind: "classification", lambda: 1, gamma: 1,
+        smoothing: 0.2, epsilon: 0, tol: 1e-3, grid: new Float64Array([0, 0]),
+      });
+      if (solver.mode === "main") throw new Error("Live tuning needs Web Workers, which this browser does not provide.");
+      if (stopped) throw new SvmCancelledError();
+      setStatus("Tuning one width per feature…");
+      announce(`Tuning ${task} with ${dim} features started.`, true);
+      const lam0 = cfg.logLam0 * LN10, g0 = Math.log(1 / dim);
+      const ard = await solver.tuneArd(
+        {
+          ...copy(), dim, kind: cfg.kind, folds: 5, smoothing: cfg.smoothing, epsilon: cfg.epsilon, tol: cfg.tol,
+          initial: Float64Array.from([lam0, ...Array(dim).fill(g0)]),
+          lower: Float64Array.from([LOG10_LAM[0] * LN10, ...Array(dim).fill(LOG10_GAMMA[0] * LN10)]),
+          upper: Float64Array.from([LOG10_LAM[1] * LN10, ...Array(dim).fill(LOG10_GAMMA[1] * LN10)]),
+          maxIterations: 60, gradientTolerance: 1e-3, maxEvaluations: cfg.maxEvaluations,
+        },
+        (pr) => {
+          evals = pr.evaluation;
+          latest = { value: pr.value, ll: pr.logLambda / LN10 };
+          pacer.push(pr);
+        },
+      );
+      await pacer.drain();
+      if (stopped) throw new SvmCancelledError();
+      setStatus("Evaluating on the test set…");
+      const fit = await solver.fitArd({
+        ...copy(), dim, kind: cfg.kind, lambda: Math.exp(ard.logLambda), gammas: ard.logGammas.map(Math.exp),
+        smoothing: cfg.smoothing, epsilon: cfg.epsilon, tol: cfg.tol, test: d.testX.slice(),
+      });
+      const ardMetric = testMetric(d, fit.decisionOnTest);
+      setStatus("Tuning a single common width for comparison…");
+      const iso = await solver.tune({
+        ...copy(), dim, kind: cfg.kind, folds: 5, smoothing: cfg.smoothing, epsilon: cfg.epsilon, tol: cfg.tol,
+        initial: [lam0, g0], lower: [LOG10_LAM[0] * LN10, LOG10_GAMMA[0] * LN10], upper: [LOG10_LAM[1] * LN10, LOG10_GAMMA[1] * LN10],
+        maxIterations: 60, gradientTolerance: 1e-3, maxEvaluations: cfg.maxEvaluations, trainTol: cfg.tol,
+        grid: d.testX.slice(),
+      }, (pr) => setStatus(`Tuning a single common width… evaluation ${pr.evaluation} of at most ${cfg.maxEvaluations}.`));
+      const isoMetric = testMetric(d, iso.final.decisionOnGrid);
+      const seconds = (performance.now() - t0) / 1000;
+      const pct = task === "classification";
+      const fmtM = (v: number) => (pct ? `${(100 * v).toFixed(1)} %` : v.toFixed(2));
+      q("[data-metric-head]").textContent = cfg.metric;
+      q("[data-res=ard-test]").textContent = fmtM(ardMetric);
+      q("[data-res=ard-cv]").textContent = ard.value.toFixed(3);
+      q("[data-res=iso-test]").textContent = fmtM(isoMetric);
+      q("[data-res=iso-cv]").textContent = iso.value.toFixed(3);
+      q("[data-result-caption]").textContent = `Held-out test set (${cfg.nTest} points), same data and folds for both models`;
+      resultEl.hidden = false;
+      const maxNoise = noise ? Math.max(...ard.logGammas.slice(d.informative)) / LN10 : NaN;
+      const minSignal = Math.min(...ard.logGammas.slice(0, d.informative)) / LN10;
+      const summary =
+        `Done in ${seconds.toFixed(1)} s (${ard.evaluations} ARD evaluations, ${iso.evaluations} for the single width, ${ard.status}). ` +
+        `${cfg.metric}: ${fmtM(ardMetric)} with one width per feature vs ${fmtM(isoMetric)} with a single width.` +
+        (noise ? ` Smallest informative log₁₀ γ ${minSignal.toFixed(1)}, largest noise log₁₀ γ ${maxNoise.toFixed(1)}.` : "");
+      setStatus(summary);
+      announce(summary, true);
+    } catch (err) {
+      pacer.clear();
+      if (err instanceof SvmCancelledError) {
+        const m = `Stopped after ${evals} evaluation${evals === 1 ? "" : "s"}; the bars show the last point tried.`;
+        setStatus(m);
+        announce(m, true);
+      } else {
+        console.error(err);
+        const m = `Live run failed: ${err instanceof Error ? err.message : err}`;
+        setStatus(m);
+        announce(m, true);
+      }
+    } finally {
+      const focusWasStop = document.activeElement === stopBtn;
+      setBusy(false);
+      slider.max = String(Math.max(live.iterates.length - 1, 0));
+      if (live.iterates.length) {
+        step = live.iterates.length - 1;
+        draw();
+      } else {
+        data = replay;
+        step = replay.iterates.length - 1;
+        slider.max = String(step);
+        draw();
+      }
+      if (focusWasStop) runBtn.focus();
+    }
+  }
+  runBtn.addEventListener("click", run);
+  stopBtn.addEventListener("click", () => {
+    stopped = true;
+    getSvmClient(root.dataset.wasm!).cancel();
+  });
+  q("[data-live-note]").hidden = true;
 </script>
 
 <style is:global>
@@ -142,6 +379,94 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .ard svg .tick.small {
     font-size: 9.5px;
     font-family: var(--sans);
+  }
+  .ard.explainer > div {
+    min-width: 0;
+  }
+  .ard .live {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.8rem 1rem 1rem;
+    margin: 0;
+    min-width: 0;
+  }
+  .ard .live legend {
+    padding: 0 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .ard .live-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .ard .live-row label {
+    font-size: 0.92rem;
+  }
+  .ard select {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font: inherit;
+    font-size: 0.92rem;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.35rem 0.5rem;
+  }
+  .ard select:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .ard .seed {
+    font-size: 0.85rem;
+    color: var(--muted);
+    align-self: center;
+  }
+  .ard .seed output {
+    font-family: var(--mono);
+  }
+  .ard .result {
+    margin-top: 0.9rem;
+    overflow-x: auto;
+  }
+  .ard .result table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  .ard .result caption {
+    text-align: left;
+    color: var(--muted);
+    padding-bottom: 0.3rem;
+  }
+  .ard .result th,
+  .ard .result td {
+    text-align: left;
+    padding: 0.3rem 0.4rem 0.3rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .ard .result th,
+  .ard .result td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .ard .result th:first-child {
+    width: 40%;
+  }
+  .ard .result td {
+    font-family: var(--mono);
+  }
+  .ard .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    margin: -1px;
   }
   .ard svg .lbl {
     fill: var(--ink-2);
