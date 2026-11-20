@@ -78,9 +78,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </p>
     <p class="note">
       <strong>Tune λ and γ</strong> minimizes the 5-fold cross-validation loss (<span data-note-cvloss>smoothed hinge loss</span> on the held-out folds) with L-BFGS-B, using the
-      exact gradient with respect to log λ and log γ, in a background thread.
-      <span data-note-smooth>The gradient needs a smoothed loss, so a smoothing δ of 0 is raised to 0.2 for tuning.</span>
-      <strong data-note-watch>Watch SMO</strong> replays the
+      exact gradient with respect to log λ and log γ, in a background thread.{" "}
+      <span data-note-smooth>The gradient needs a smoothed loss, so a smoothing δ of 0 is raised to 0.2 for tuning.{" "}</span>
+      <strong data-note-watch>Watch SMO</strong> replays the{" "}
       <span data-note-iter>solver iteration by iteration</span> for the current parameters.
     </p>
   </div>
