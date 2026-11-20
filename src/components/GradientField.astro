@@ -1,12 +1,20 @@
 ---
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
-<div class="gfield card explainer" data-src={`${base}/data/hpo-path.json`}>
+<div class="gfield card explainer" data-src={`${base}/data/hpo-path.json`} data-optimizer={`${base}/wasm/svm_browser_optimizer_bg.wasm`}>
   <div>
-    <canvas tabindex="0" role="application" aria-label="CV error landscape with gradient arrows; click to start a gradient descent" aria-describedby="gfield-hint"></canvas>
-    <p class="hint" id="gfield-hint">Click anywhere to start gradient descent from that point. With the keyboard: arrow keys move the cursor, Enter starts the descent.</p>
+    <canvas tabindex="0" role="application" aria-label="CV error landscape with gradient arrows; click to start gradient descent and L-BFGS from that point" aria-describedby="gfield-hint"></canvas>
+    <p class="hint" id="gfield-hint">Click anywhere to start the selected optimizer from that point. With the keyboard: arrow keys move the cursor, Enter starts it.</p>
   </div>
   <div>
+    <div class="row">
+      <span class="label">Method</span>
+      <div class="chips" data-methods role="group" aria-label="Optimization method">
+        <button class="chip" data-method="gd" type="button" aria-pressed="false">Gradient descent</button>
+        <button class="chip" data-method="lbfgs" type="button" aria-pressed="false">L-BFGS</button>
+        <button class="chip active" data-method="both" type="button" aria-pressed="true">Both</button>
+      </div>
+    </div>
     <div class="row">
       <span class="label">Start from</span>
       <div class="chips" data-starts role="group" aria-label="Preset starting points">
@@ -27,12 +35,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><dt>∂E / ∂log₁₀ λ</dt><dd data-stat="gx">–</dd></div>
       <div><dt>∂E / ∂log₁₀ γ</dt><dd data-stat="gy">–</dd></div>
     </dl>
+    <p class="legend" data-legend aria-hidden="true">
+      <span data-leg="gd"><i class="sw gd"></i>{" "}Gradient descent</span>{" "}
+      <span data-leg="lbfgs"><i class="sw lb"></i>{" "}L-BFGS</span>
+    </p>
     <p class="readout" data-summary aria-live="polite">Hover over the map to read the exact gradient at a point.</p>
     <p class="note">
       Arrows show the negative gradient (steepest descent), longer where it is steeper. Error and gradient were
       computed with <code>optimized-svm</code> at the 625 grid nodes — every gradient is exact, from one adjoint
-      system per fold — and are interpolated in between, so the descent is a replay on the precomputed surface.
-      Plain gradient descent zig-zags in the narrow valley; the library uses L-BFGS, which needs far fewer steps.
+      system per fold. Both methods run on the same interpolated surface, a bicubic Hermite interpolant built
+      from the exact node gradients, so its value and gradient are consistent, which the L-BFGS line search
+      needs. The runs are replays on this precomputed surface. Plain gradient descent zig-zags in the narrow
+      valley; L-BFGS is what the library uses.
     </p>
   </div>
 </div>
@@ -40,6 +54,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <script>
   import { css, fmt, observeWidth, onTheme, setupCanvas } from "../lib/plot";
   import { paintLandscape } from "../lib/landscape";
+  import { createHermite } from "../lib/hermite";
 
   type Data = {
     log10_lam: number[];
@@ -55,8 +70,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const M = { l: 46, r: 12, t: 12, b: 38 };
   let data: Data;
   let showArrows = true;
-  let path: [number, number][] = [];
+  type Method = "gd" | "lbfgs" | "both";
+  type Run = { pts: [number, number][]; label: string; evals?: number };
+  let method: Method = "both";
+  let runs: { gd?: Run; lbfgs?: Run } = {};
   let shown = 0; // number of path segments drawn so far
+  let token = 0; // invalidates a start() that is still waiting for the optimizer to load
   let timer = 0;
   let hover: [number, number] | null = null;
   const cursor: [number, number] = [-2, 1.5];
@@ -65,16 +84,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const stat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
   const summary = root.querySelector<HTMLElement>("[data-summary]")!;
 
-  // bilinear interpolation of a grid quantity (rows: gamma index, columns: lambda index)
-  function interp(F: number[][], x: number, y: number) {
-    const xs = data.log10_lam, ys = data.log10_gamma, n = xs.length, m = ys.length;
-    const fx = Math.min(Math.max(((x - xs[0]) / (xs[n - 1] - xs[0])) * (n - 1), 0), n - 1.0001);
-    const fy = Math.min(Math.max(((y - ys[0]) / (ys[m - 1] - ys[0])) * (m - 1), 0), m - 1.0001);
-    const i = Math.floor(fx), j = Math.floor(fy), a = fx - i, b = fy - j;
-    return F[j][i] * (1 - a) * (1 - b) + F[j][i + 1] * a * (1 - b) + F[j + 1][i] * (1 - a) * b + F[j + 1][i + 1] * a * b;
-  }
-  const E = (x: number, y: number) => interp(data.cv_error, x, y);
-  const G = (x: number, y: number): [number, number] => [interp(data.grad_log10_lam, x, y), interp(data.grad_log10_gamma, x, y)];
+  // bicubic Hermite interpolant of the grid: E and G are value and exact gradient of the same surface
+  let E: (x: number, y: number) => number;
+  let G: (x: number, y: number) => [number, number];
 
   function readout(p: [number, number]) {
     const [gx, gy] = G(...p);
@@ -131,29 +143,36 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       }
       ctx.globalAlpha = 1;
     }
-    // descent path
-    if (path.length) {
-      const pts = path.slice(0, shown + 1);
+    // optimizer paths: gradient descent (circles, warm accent) and L-BFGS (squares, green)
+    const drawPath = (run: Run | undefined, col: string, square: boolean) => {
+      if (!run) return;
+      const pts = run.pts.slice(0, Math.min(shown, run.pts.length - 1) + 1);
+      const trace = () => pts.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](px(p[0]), py(p[1])));
+      ctx.lineJoin = "round";
       ctx.strokeStyle = css("--surface");
       ctx.lineWidth = 4.5;
       ctx.beginPath();
-      pts.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](px(p[0]), py(p[1])));
+      trace();
       ctx.stroke();
-      ctx.strokeStyle = warm;
+      ctx.strokeStyle = col;
       ctx.lineWidth = 2.2;
       ctx.beginPath();
-      pts.forEach((p, k) => ctx[k ? "lineTo" : "moveTo"](px(p[0]), py(p[1])));
+      trace();
       ctx.stroke();
       pts.forEach((p, k) => {
-        ctx.fillStyle = k === pts.length - 1 ? warm : css("--surface");
-        ctx.strokeStyle = warm;
+        const last = k === pts.length - 1, r = last ? 6 : 3;
+        ctx.fillStyle = last ? col : css("--surface");
+        ctx.strokeStyle = col;
         ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.arc(px(p[0]), py(p[1]), k === pts.length - 1 ? 6 : 3, 0, 7);
+        if (square) ctx.rect(px(p[0]) - r, py(p[1]) - r, 2 * r, 2 * r);
+        else ctx.arc(px(p[0]), py(p[1]), r, 0, 7);
         ctx.fill();
         ctx.stroke();
       });
-    }
+    };
+    drawPath(runs.gd, warm, false);
+    drawPath(runs.lbfgs, css("--ok"), true);
     const mark = hover ?? (keyboardActive ? cursor : null);
     if (mark && !timer) {
       ctx.strokeStyle = ink;
@@ -195,40 +214,112 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     return pts;
   }
 
-  function start(p: [number, number]) {
+  // L-BFGS (WebAssembly optimizer of the library) on the interpolated surface. The optimizer API only returns
+  // the final point, so the accepted iterates are obtained by re-running it from the same start with
+  // maxIterations = 1, 2, ...: it is deterministic, so run k ends at iterate k exactly. The cost is trivial.
+  type Optimizer = Awaited<ReturnType<typeof import("../lib/vendor/browser-optimizer/optimizer.mjs").createOptimizer>>;
+  let optimizer: Promise<Optimizer> | undefined;
+  function loadOptimizer() {
+    optimizer ??= import("../lib/vendor/browser-optimizer/optimizer.mjs")
+      .then((m) => m.createOptimizer(new URL(root.dataset.optimizer!, location.href).href))
+      .catch((e) => {
+        optimizer = undefined;
+        throw e;
+      });
+    return optimizer;
+  }
+  function lbfgs(opt: Optimizer, start: [number, number]): Run {
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const lower = [xs[0], ys[0]], upper = [xs[xs.length - 1], ys[ys.length - 1]];
+    const pts: [number, number][] = [start];
+    let evals = 0;
+    for (let k = 1; k <= 100; k++) {
+      const res = opt.minimize({
+        initial: start,
+        lower,
+        upper,
+        maxIterations: k,
+        gradientTolerance: 3e-3,
+        evaluate: (x) => {
+          const [gx, gy] = G(x[0], x[1]);
+          return { value: E(x[0], x[1]), gradient: [gx, gy] };
+        },
+      });
+      evals = res.evaluations;
+      if (res.iterations < k) break; // already converged earlier
+      pts.push([res.x[0], res.x[1]]);
+      if (res.status !== "iteration-limit") break;
+    }
+    return { pts, label: "L-BFGS", evals };
+  }
+
+  async function start(p: [number, number]) {
     clearInterval(timer);
-    path = descend(p);
+    timer = 0;
+    const my = ++token;
+    summary.textContent = "";
+    const xs = data.log10_lam, ys = data.log10_gamma;
+    const s0: [number, number] = [Math.min(Math.max(p[0], xs[0]), xs[xs.length - 1]), Math.min(Math.max(p[1], ys[0]), ys[ys.length - 1])];
+    runs = {};
+    let failed = "";
+    if (method !== "lbfgs") runs.gd = { pts: descend(s0), label: "Gradient descent" };
+    if (method !== "gd") {
+      try {
+        const opt = await loadOptimizer();
+        if (my !== token) return;
+        runs.lbfgs = lbfgs(opt, s0);
+      } catch {
+        if (my !== token) return;
+        failed = "The L-BFGS optimizer could not be loaded.";
+        runs.gd ??= { pts: descend(s0), label: "Gradient descent" };
+      }
+    }
+    const len = Math.max(...Object.values(runs).map((r) => r.pts.length)) - 1;
     shown = 0;
     summary.textContent = "";
-    readout(path[0]);
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      shown = path.length - 1;
-      finish();
+    const lead = (runs.gd ?? runs.lbfgs)!;
+    readout(lead.pts[0]);
+    const done = () => {
+      timer = 0;
+      finish(failed);
       draw();
+    };
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      shown = len;
+      done();
       return;
     }
     timer = window.setInterval(() => {
       shown++;
-      readout(path[shown]);
+      readout(lead.pts[Math.min(shown, lead.pts.length - 1)]);
       draw();
-      if (shown >= path.length - 1) {
+      if (shown >= len) {
         clearInterval(timer);
-        timer = 0;
-        finish();
-        draw();
+        done();
       }
     }, 90);
     draw();
   }
 
-  function finish() {
-    const last = path[path.length - 1];
-    readout(last);
+  function finish(failed: string) {
     const best = Math.min(...data.cv_error.flat());
-    const stalled = E(...last) - best > 0.05;
+    const parts: string[] = [];
+    let stalled = false;
+    for (const r of [runs.gd, runs.lbfgs]) {
+      if (!r) continue;
+      const last = r.pts[r.pts.length - 1], e = E(...last);
+      const stall = e - best > 0.05;
+      stalled ||= stall;
+      const n = r.pts.length - 1;
+      const cost = r.evals === undefined ? `${n} steps` : `${n} iterations (${r.evals} evaluations)`;
+      parts.push(`${r.label}: ${cost} → CV error ${e.toFixed(4)}${stall ? " (stalled on a plateau)" : ""}.`);
+    }
+    const lead = (runs.gd ?? runs.lbfgs)!;
+    readout(lead.pts[lead.pts.length - 1]);
     summary.textContent =
-      `Gradient descent: ${path.length - 1} steps to log₁₀ λ = ${last[0].toFixed(2)}, log₁₀ γ = ${last[1].toFixed(2)}, CV error ${E(...last).toFixed(4)}` +
-      (stalled ? " — stalled on a plateau where the gradient almost vanishes. Gradient methods need a sensible start (or restarts)." : ".");
+      parts.join(" ") +
+      (stalled ? " The gradient almost vanishes on a plateau; gradient methods need a sensible start (or restarts)." : "") +
+      (failed ? ` ${failed}` : "");
   }
 
   function toData(ev: MouseEvent): [number, number] {
@@ -289,6 +380,23 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const [x, y] = b.getAttribute("data-start")!.split(",").map(Number);
     start([x, y]);
   });
+  const legend = root.querySelector<HTMLElement>("[data-legend]")!;
+  const syncLegend = () => {
+    legend.querySelector<HTMLElement>("[data-leg=gd]")!.hidden = method === "lbfgs";
+    legend.querySelector<HTMLElement>("[data-leg=lbfgs]")!.hidden = method === "gd";
+  };
+  syncLegend();
+  const methodBtns = root.querySelectorAll<HTMLButtonElement>("[data-method]");
+  methodBtns.forEach((b) =>
+    b.addEventListener("click", () => {
+      method = b.dataset.method as Method;
+      methodBtns.forEach((o) => {
+        o.setAttribute("aria-pressed", String(o === b));
+        o.classList.toggle("active", o === b);
+      });
+      syncLegend();
+    }),
+  );
   const arrowsBtn = root.querySelector<HTMLButtonElement>("[data-arrows]")!;
   arrowsBtn.addEventListener("click", () => {
     showArrows = !showArrows;
@@ -299,7 +407,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   root.querySelector("[data-clear]")!.addEventListener("click", () => {
     clearInterval(timer);
     timer = 0;
-    path = [];
+    token++;
+    runs = {};
     summary.textContent = "Hover over the map to read the exact gradient at a point.";
     draw();
   });
@@ -315,6 +424,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     .then((r) => r.json())
     .then((d: Data) => {
       data = d;
+      ({ E, G } = createHermite({ xs: d.log10_lam, ys: d.log10_gamma, f: d.cv_error, fx: d.grad_log10_lam, fy: d.grad_log10_gamma }));
       draw();
     });
 </script>
@@ -327,6 +437,35 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   canvas:focus-visible {
     outline: 3px solid var(--accent);
     outline-offset: 2px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1rem;
+    margin: 0.8rem 0 0;
+    font-size: 0.85rem;
+    color: var(--ink-2);
+  }
+  .legend [hidden] {
+    display: none;
+  }
+  .sw {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 0.2rem;
+    vertical-align: -1px;
+    border: 2px solid var(--surface);
+    outline: 1.5px solid;
+  }
+  .sw.gd {
+    border-radius: 50%;
+    background: var(--accent-2);
+    outline-color: var(--accent-2);
+  }
+  .sw.lb {
+    background: var(--ok);
+    outline-color: var(--ok);
   }
   .readout {
     margin: 1rem 0 0;
