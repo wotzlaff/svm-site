@@ -64,24 +64,6 @@ export function contour(
   return segs;
 }
 
-export type Solver = {
-  memory: WebAssembly.Memory;
-  alloc(n: number): number;
-  dealloc(ptr: number, n: number): void;
-  train(x: number, n: number, dim: number, y: number, kind: number, lam: number, gamma: number,
-        smoothing: number, epsilon: number, tol: number): bigint;
-  decision(p: number, m: number, out: number): number;
-  support(out: number): bigint;
-  stat(which: number): number;
-};
-
-export async function loadSolver(url: string): Promise<Solver> {
-  const { instance } = await WebAssembly.instantiateStreaming(fetch(url), {}).catch(async () =>
-    WebAssembly.instantiate(await (await fetch(url)).arrayBuffer(), {}),
-  );
-  return instance.exports as unknown as Solver;
-}
-
 /** Calls `f` on every theme change (toggle button or system preference). */
 export function onTheme(f: () => void) {
   window.addEventListener("themechange", f);

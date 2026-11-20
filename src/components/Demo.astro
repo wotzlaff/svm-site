@@ -51,22 +51,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </div>
 
 <script>
-  type Exports = {
-    memory: WebAssembly.Memory;
-    alloc(n: number): number;
-    dealloc(ptr: number, n: number): void;
-    train(x: number, n: number, dim: number, y: number, kind: number, lam: number, gamma: number,
-          smoothing: number, epsilon: number, tol: number): bigint;
-    decision(p: number, m: number, out: number): number;
-    support(out: number): bigint;
-    stat(which: number): number;
-  };
+  import { getSvmClient, SvmSupersededError } from "../lib/svm-client";
 
   const root = document.querySelector<HTMLElement>(".demo")!;
   const canvas = root.querySelector("canvas")!;
   const ctx = canvas.getContext("2d")!;
   const RES = 112; // decision function grid resolution
-  let wasm: Exports | null = null;
+  const solver = getSvmClient(root.dataset.wasm!);
   let points: { x: number; y: number; c: number }[] = [];
   let clickClass = 1;
   let pending = 0;
@@ -219,50 +210,51 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     }
   }
 
-  function train() {
+  async function train() {
     const n = points.length;
     setStat("n", String(n));
-    const classes = new Set(points.map((p) => p.c));
-    if (!wasm || n < 2 || classes.size < 2) {
+    const snapshot = points.slice();
+    const classes = new Set(snapshot.map((p) => p.c));
+    if (n < 2 || classes.size < 2) {
       for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
       render(null, new Set());
       return;
     }
-    const e = wasm;
+    if (last.dec) render(last.dec, last.sv); // show the new points right away, the model follows
     const { lam, gamma, smoothing } = params();
-    const px = e.alloc(2 * n), py = e.alloc(n), m = RES * RES;
-    const pg = e.alloc(2 * m), pd = e.alloc(m), pt = e.alloc(n);
-    new Float64Array(e.memory.buffer, px, 2 * n).set(points.flatMap((p) => [p.x, p.y]));
-    new Float64Array(e.memory.buffer, py, n).set(points.map((p) => p.c));
-    const t0 = performance.now();
-    const steps = Number(e.train(px, n, 2, py, 0, lam, gamma, smoothing, 0, 1e-3));
-    const dt = performance.now() - t0;
-    const grid = new Float64Array(e.memory.buffer, pg, 2 * m);
+    const m = RES * RES;
+    const grid = new Float64Array(2 * m);
     for (let j = 0; j < RES; j++) {
       for (let i = 0; i < RES; i++) {
         grid[2 * (j * RES + i)] = i / (RES - 1);
         grid[2 * (j * RES + i) + 1] = j / (RES - 1);
       }
     }
-    e.decision(pg, m, pd);
-    const dec = new Float64Array(new Float64Array(e.memory.buffer, pd, m));
-    e.decision(px, n, pt);
-    const train_dec = new Float64Array(e.memory.buffer, pt, n);
-    let correct = 0;
-    points.forEach((p, k) => (correct += train_dec[k] * p.c > 0 ? 1 : 0));
-    const nsv = Number(e.support(0));
-    const ps = e.alloc(Math.max(nsv, 1));
-    e.support(ps);
-    const sv = new Set(Array.from(new Float64Array(e.memory.buffer, ps, nsv), Number));
-    setStat("sv", `${nsv} (${Math.round((100 * nsv) / n)} %)`);
-    setStat("steps", steps.toLocaleString("en"));
-    setStat("time", `${dt.toFixed(1)} ms`);
-    setStat("acc", `${((100 * correct) / n).toFixed(1)} %`);
-    setStat("gap", fmt(Math.max(e.stat(1), 0)));
-    for (const [p, len] of [[px, 2 * n], [py, n], [pg, 2 * m], [pd, m], [pt, n], [ps, Math.max(nsv, 1)]]) {
-      e.dealloc(p, len);
+    let r;
+    try {
+      r = await solver.train({
+        x: new Float64Array(snapshot.flatMap((p) => [p.x, p.y])),
+        y: new Float64Array(snapshot.map((p) => p.c)),
+        dim: 2, kind: "classification", lambda: lam, gamma, smoothing, epsilon: 0, tol: 1e-3, grid,
+      });
+    } catch (err) {
+      if (!(err instanceof SvmSupersededError)) console.error(err);
+      return;
     }
-    render(dec, sv);
+    if (r.steps < 0) {
+      for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
+      render(null, new Set());
+      return;
+    }
+    let correct = 0;
+    snapshot.forEach((p, k) => (correct += r.decisionOnTrain[k] * p.c > 0 ? 1 : 0));
+    const nsv = r.support.length;
+    setStat("sv", `${nsv} (${Math.round((100 * nsv) / n)} %)`);
+    setStat("steps", r.steps.toLocaleString("en"));
+    setStat("time", `${(1000 * r.seconds).toFixed(1)} ms`);
+    setStat("acc", `${((100 * correct) / n).toFixed(1)} %`);
+    setStat("gap", fmt(Math.max(r.gap, 0)));
+    render(r.decisionOnGrid, new Set(Array.from(r.support, Number)));
   }
 
   function schedule() {
@@ -341,12 +333,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   preset("checkerboard");
   schedule();
-  WebAssembly.instantiateStreaming(fetch(root.dataset.wasm!), {})
-    .catch(async () => WebAssembly.instantiate(await (await fetch(root.dataset.wasm!)).arrayBuffer(), {}))
-    .then(({ instance }) => {
-      wasm = instance.exports as unknown as Exports;
-      schedule();
-    });
 </script>
 
 <style>

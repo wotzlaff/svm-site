@@ -50,7 +50,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </div>
 
 <script>
-  import { css, fmt, loadSolver, onTheme, setupCanvas, type Solver } from "../lib/plot";
+  import { css, fmt, onTheme, setupCanvas } from "../lib/plot";
+  import { getSvmClient, SvmSupersededError } from "../lib/svm-client";
 
   const root = document.querySelector<HTMLElement>(".rdemo")!;
   const canvas = root.querySelector("canvas")!;
@@ -58,7 +59,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const ctx = setupCanvas(canvas, W, H);
   canvas.style.aspectRatio = `${W} / ${H}`;
   const NX = 240; // curve resolution
-  let wasm: Solver | null = null;
+  const solver = getSvmClient(root.dataset.wasm!);
   let points: { x: number; y: number }[] = [];
   let pending = 0;
   let keyboardActive = false;
@@ -194,50 +195,47 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   const setStat = (k: string, v: string) => (root.querySelector(`[data-stat=${k}]`)!.textContent = v);
 
-  function train() {
+  async function train() {
     const n = points.length;
     setStat("n", String(n));
     const { eps, lam, gamma, smoothing } = params();
-    if (!wasm || n < 2) {
+    if (n < 2) {
       for (const k of ["sv", "steps", "time", "inside", "mae"]) setStat(k, "–");
       render(null, new Set(), eps);
       return;
     }
-    const e = wasm;
-    const pxs = e.alloc(n), pys = e.alloc(n), pg = e.alloc(NX), pf = e.alloc(NX), pt = e.alloc(n);
-    new Float64Array(e.memory.buffer, pxs, n).set(points.map((p) => p.x));
-    new Float64Array(e.memory.buffer, pys, n).set(points.map((p) => p.y));
-    const t0 = performance.now();
-    const steps = Number(e.train(pxs, n, 1, pys, 1, lam, gamma, smoothing, eps, 1e-4));
-    const dt = performance.now() - t0;
-    if (steps < 0) {
-      render(null, new Set(), eps);
-      for (const p of [pxs, pys, pg, pf, pt]) e.dealloc(p, n);
+    const snapshot = points.slice();
+    if (last.f) render(last.f, last.sv, last.eps); // show the new points right away, the model follows
+    let r;
+    try {
+      r = await solver.train({
+        x: new Float64Array(snapshot.map((p) => p.x)),
+        y: new Float64Array(snapshot.map((p) => p.y)),
+        dim: 1, kind: "regression", lambda: lam, gamma, smoothing, epsilon: eps, tol: 1e-4,
+        grid: Float64Array.from({ length: NX }, (_, i) => i / (NX - 1)),
+      });
+    } catch (err) {
+      if (!(err instanceof SvmSupersededError)) console.error(err);
       return;
     }
-    new Float64Array(e.memory.buffer, pg, NX).set(Array.from({ length: NX }, (_, i) => i / (NX - 1)));
-    e.decision(pg, NX, pf);
-    const f = new Float64Array(new Float64Array(e.memory.buffer, pf, NX));
-    e.decision(pxs, n, pt);
-    const fit = new Float64Array(e.memory.buffer, pt, n);
+    if (r.steps < 0) {
+      render(null, new Set(), eps);
+      return;
+    }
     let inside = 0, mae = 0;
-    points.forEach((p, k) => {
-      const d = Math.abs(p.y - fit[k]);
+    snapshot.forEach((p, k) => {
+      const d = Math.abs(p.y - r.decisionOnTrain[k]);
       mae += d / n;
       if (d <= eps + 1e-9) inside++;
     });
-    const nsv = Number(e.support(0));
-    const ps = e.alloc(Math.max(nsv, 1));
-    e.support(ps);
     // for regression the solver numbers the two copies of each sample: map back to samples
-    const sv = new Set(Array.from(new Float64Array(e.memory.buffer, ps, nsv), (v) => Number(v) % n));
+    const sv = new Set(Array.from(r.support, (v) => Number(v) % n));
     setStat("sv", `${sv.size} (${Math.round((100 * sv.size) / n)} %)`);
-    setStat("steps", steps.toLocaleString("en"));
-    setStat("time", `${dt.toFixed(1)} ms`);
+    setStat("steps", r.steps.toLocaleString("en"));
+    setStat("time", `${(1000 * r.seconds).toFixed(1)} ms`);
     setStat("inside", `${inside} (${Math.round((100 * inside) / n)} %)`);
     setStat("mae", mae.toFixed(3));
-    for (const [p, len] of [[pxs, n], [pys, n], [pg, NX], [pf, NX], [pt, n], [ps, Math.max(nsv, 1)]]) e.dealloc(p, len);
-    render(f, sv, eps);
+    render(r.decisionOnGrid, sv, eps);
   }
 
   function schedule() {
@@ -320,10 +318,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   preset("sine");
   schedule();
-  loadSolver(root.dataset.wasm!).then((s) => {
-    wasm = s;
-    schedule();
-  });
 </script>
 
 <style>
