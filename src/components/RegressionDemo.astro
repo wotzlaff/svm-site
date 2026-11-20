@@ -33,6 +33,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <span>Loss smoothing δ <output data-out="smoothing"></output></span>
       <input type="range" min="0" max="0.2" step="0.005" value="0" data-param="smoothing" />
     </label>
+    <div class="btn-row">
+      <button class="btn small primary" type="button" data-tune>Tune λ and γ</button>
+      <button class="btn small" type="button" data-stop hidden>Stop</button>
+    </div>
+    <p class="tune-status" role="status" data-status></p>
+    <div class="tune-panel" data-tune-panel hidden><div class="tune-inset" data-inset></div></div>
     <dl class="stats" aria-live="polite">
       <div><dt>samples</dt><dd data-stat="n">–</dd></div>
       <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
@@ -40,18 +46,26 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><dt>training time</dt><dd data-stat="time">–</dd></div>
       <div><dt>points inside the tube</dt><dd data-stat="inside">–</dd></div>
       <div><dt>mean absolute error</dt><dd data-stat="mae">–</dd></div>
+      <div><dt>5-fold CV loss</dt><dd data-stat="cv">–</dd></div>
+      <div><dt>CV evaluations</dt><dd data-stat="evals">–</dd></div>
     </dl>
     <p class="note">
       ε-insensitive regression with the Rust solver in WebAssembly. Points inside the tube cost nothing,
       so only the ringed points (on or outside its boundary) are support vectors; the segments show
       how far the others stick out. Increase ε and the model gets sparser.
     </p>
+    <p class="note">
+      <strong>Tune λ and γ</strong> minimizes the 5-fold cross-validation loss (smoothed absolute error on the held-out folds) with
+      L-BFGS-B and exact gradients, keeping ε at the slider value. The gradient needs a smoothed loss, so a
+      smoothing δ of 0 is raised to 0.05 for tuning.
+    </p>
   </div>
 </div>
 
 <script>
   import { css, fmt, onTheme, setupCanvas } from "../lib/plot";
-  import { getSvmClient, SvmSupersededError } from "../lib/svm-client";
+  import { getSvmClient, SvmCancelledError, SvmSupersededError, type SvmTrainResult, type SvmTuneProgress } from "../lib/svm-client";
+  import { createPacer, createTuneInset, type TunePoint } from "../lib/tune-ui";
 
   const root = document.querySelector<HTMLElement>(".rdemo")!;
   const canvas = root.querySelector("canvas")!;
@@ -63,6 +77,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   let points: { x: number; y: number }[] = [];
   let pending = 0;
   let keyboardActive = false;
+  const LN10 = Math.LN10;
+  const q = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
+  const sliders = (k: string) => q<HTMLInputElement>(`[data-param=${k}]`);
+  /** Exact parameters set by the tuner; cleared as soon as a slider is moved by hand. */
+  let exact: { lam: number; gamma: number; smoothing: number } | null = null;
+  let busy: "idle" | "tuning" = "idle";
   const cursor = { x: 0.5, y: 0.5 };
   let last: { f: Float64Array | null; sv: Set<number>; eps: number } = { f: null, sv: new Set(), eps: 0 };
 
@@ -102,8 +122,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   function params() {
-    const v = (k: string) => Number(root.querySelector<HTMLInputElement>(`[data-param=${k}]`)!.value);
-    return { eps: v("eps"), lam: 10 ** v("lam"), gamma: 10 ** v("gamma"), smoothing: v("smoothing") };
+    const v = (k: string) => Number(sliders(k).value);
+    return { eps: v("eps"), lam: exact?.lam ?? 10 ** v("lam"), gamma: exact?.gamma ?? 10 ** v("gamma"),
+             smoothing: exact?.smoothing ?? v("smoothing") };
   }
 
   const px = (x: number) => M.l + x * (W - M.l - M.r);
@@ -215,9 +236,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         grid: Float64Array.from({ length: NX }, (_, i) => i / (NX - 1)),
       });
     } catch (err) {
-      if (!(err instanceof SvmSupersededError)) console.error(err);
+      if (!(err instanceof SvmSupersededError || err instanceof SvmCancelledError)) console.error(err);
       return;
     }
+    showResult(snapshot, r, eps);
+  }
+
+  function showResult(snapshot: typeof points, r: SvmTrainResult, eps: number) {
+    const n = snapshot.length;
     if (r.steps < 0) {
       render(null, new Set(), eps);
       return;
@@ -245,6 +271,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     out("lam", fmt(lam));
     out("gamma", fmt(gamma));
     out("smoothing", smoothing.toFixed(3));
+    if (busy !== "idle") return; // the tuner owns the picture
     cancelAnimationFrame(pending);
     pending = requestAnimationFrame(train);
   }
@@ -265,15 +292,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     };
   }
 
-  root.querySelectorAll("[data-param]").forEach((el) => el.addEventListener("input", schedule));
+  root.querySelectorAll("[data-param]").forEach((el) =>
+    el.addEventListener("input", () => {
+      if (el !== sliders("eps")) exact = null; // ε keeps the tuned λ, γ, δ
+      edited();
+    }),
+  );
   root.querySelector("[data-presets]")!.addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest("[data-preset]");
     if (!b) return;
     activate(b.parentElement!, b);
     preset(b.getAttribute("data-preset")!);
-    schedule();
+    edited();
   });
   canvas.addEventListener("click", (ev) => {
+    if (busy !== "idle") return;
     keyboardActive = false;
     const p = toData(ev);
     if (ev.shiftKey && points.length) {
@@ -286,9 +319,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     } else {
       points.push(p);
     }
-    schedule();
+    edited();
   });
   canvas.addEventListener("keydown", (ev) => {
+    if (busy !== "idle") return;
     const step = ev.shiftKey && ev.key !== "Enter" ? 0.1 : 0.02;
     const move: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step],
@@ -298,10 +332,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       cursor.y = Math.min(1, Math.max(0, cursor.y + move[ev.key][1]));
     } else if (ev.key === "Enter" || ev.key === " ") {
       points.push({ x: cursor.x, y: cursor.y });
-      schedule();
+      edited();
     } else if (ev.key === "Backspace" || ev.key === "Delete") {
       points.pop();
-      schedule();
+      edited();
     } else {
       return;
     }
@@ -315,6 +349,124 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   });
   canvas.addEventListener("blur", () => render(last.f, last.sv, last.eps));
   onTheme(() => render(last.f, last.sv, last.eps));
+
+  // ---- hyperparameter tuning ----
+  const statusEl = q("[data-status]");
+  const tuneBtn = q<HTMLButtonElement>("[data-tune]");
+  const stopBtn = q<HTMLButtonElement>("[data-stop]");
+  const tunePanel = q("[data-tune-panel]");
+  const range = (k: string): [number, number] => [Number(sliders(k).min), Number(sliders(k).max)];
+  const inset = createTuneInset(q("[data-inset]"), { lam: range("lam"), gamma: range("gamma") });
+  const status = (t: string) => (statusEl.textContent = t);
+  let stopped = false;
+
+  /** Data or parameters were changed by the user: the CV numbers no longer apply. */
+  function edited() {
+    setStat("cv", "–");
+    setStat("evals", "–");
+    status("");
+    schedule();
+  }
+
+  function setLocked(on: boolean) {
+    root.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-param], [data-preset]").forEach((el) => (el.disabled = on));
+    tuneBtn.disabled = on;
+    stopBtn.hidden = !on;
+    canvas.setAttribute("aria-disabled", String(on));
+  }
+
+  function showParams(lam: number, gamma: number, smoothing: number) {
+    exact = { lam, gamma, smoothing };
+    sliders("lam").value = String(Math.log10(lam));
+    sliders("gamma").value = String(Math.log10(gamma));
+    sliders("smoothing").value = String(smoothing);
+    q("[data-out=lam]").textContent = fmt(lam);
+    q("[data-out=gamma]").textContent = fmt(gamma);
+    q("[data-out=smoothing]").textContent = smoothing.toFixed(3);
+  }
+
+  async function tune() {
+    if (busy !== "idle") return;
+    const snap = points.slice();
+    if (snap.length < 10) return status("Tuning needs at least 10 points (5-fold cross-validation).");
+    if (solver.mode === "main") return status("Tuning needs Web Workers, which this browser does not provide.");
+    let { eps, lam, gamma, smoothing } = params();
+    let note = "";
+    if (smoothing <= 0) {
+      smoothing = 0.05;
+      note = " Smoothing δ was 0 and is now 0.05: the hypergradient needs a smoothed loss.";
+    }
+    showParams(lam, gamma, smoothing);
+    busy = "tuning";
+    stopped = false;
+    setLocked(true);
+    stopBtn.focus();
+    tunePanel.hidden = false;
+    const hist: TunePoint[] = [];
+    inset.set(hist);
+    setStat("cv", "–");
+    setStat("evals", "0");
+    status("Tuning…" + note);
+    const toSv = (support: Float64Array) => new Set(Array.from(support, (v) => Number(v) % snap.length));
+    const pacer = createPacer<SvmTuneProgress>((pr) => {
+      showParams(Math.exp(pr.logLambda), Math.exp(pr.logGamma), smoothing);
+      hist.push({ ll: pr.logLambda / LN10, lg: pr.logGamma / LN10, value: pr.value });
+      inset.set(hist);
+      setStat("cv", pr.value.toFixed(4));
+      setStat("evals", String(pr.evaluation));
+      render(pr.decisionOnGrid, toSv(pr.support), eps);
+    });
+    try {
+      const res = await solver.tune(
+        {
+          x: new Float64Array(snap.map((p) => p.x)),
+          y: new Float64Array(snap.map((p) => p.y)),
+          dim: 1, kind: "regression", folds: 5, smoothing, epsilon: eps, tol: 1e-6, trainTol: 1e-4,
+          initial: [Math.log(lam), Math.log(gamma)],
+          lower: [range("lam")[0] * LN10, range("gamma")[0] * LN10],
+          upper: [range("lam")[1] * LN10, range("gamma")[1] * LN10],
+          maxIterations: 40, gradientTolerance: 1e-3, maxEvaluations: 60,
+          grid: Float64Array.from({ length: NX }, (_, i) => i / (NX - 1)),
+        },
+        (pr) => pacer.push(pr),
+      );
+      await pacer.drain();
+      if (stopped) throw new SvmCancelledError();
+      showParams(Math.exp(res.logLambda), Math.exp(res.logGamma), smoothing);
+      showResult(snap, res.final, eps);
+      setStat("cv", res.value.toFixed(4));
+      setStat("evals", String(res.evaluations));
+      const why = res.status === "converged" ? "converged"
+        : res.status === "evaluation-limit" ? "stopped at the evaluation limit"
+        : res.status === "solver-failure" ? "stopped: the solver did not converge at a trial point (best point kept)"
+        : "finished without further progress";
+      status(
+        `Tuning ${why} after ${res.evaluations} evaluations${Number.isFinite(res.iterations) ? ` (${res.iterations} iterations)` : ""} ` +
+          `in ${res.seconds.toFixed(1)} s: λ = ${fmt(Math.exp(res.logLambda))}, γ = ${fmt(Math.exp(res.logGamma))}, ` +
+          `5-fold CV loss ${res.value.toFixed(4)}.` + note,
+      );
+    } catch (err) {
+      pacer.clear();
+      if (err instanceof SvmCancelledError) {
+        status(`Stopped after ${q("[data-stat=evals]").textContent} evaluations; the model shows the last parameters tried.`);
+      } else {
+        console.error(err);
+        status(`Tuning failed: ${err instanceof Error ? err.message : err}`);
+      }
+      busy = "idle";
+      schedule();
+    } finally {
+      const focusWasStop = document.activeElement === stopBtn;
+      busy = "idle";
+      setLocked(false);
+      if (focusWasStop) tuneBtn.focus();
+    }
+  }
+  stopBtn.addEventListener("click", () => {
+    stopped = true;
+    solver.cancel();
+  });
+  tuneBtn.addEventListener("click", tune);
 
   preset("sine");
   schedule();

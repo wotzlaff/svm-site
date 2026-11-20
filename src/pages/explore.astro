@@ -8,6 +8,7 @@ import ArdBars from "../components/ArdBars.astro";
 import GradientField from "../components/GradientField.astro";
 import HardConstraints from "../components/HardConstraints.astro";
 
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const description =
   "Interactive explainers for support vector machines: hard margins and ε-tubes, smoothed loss functions, gradient-based hyperparameter optimization, exact hypergradients and automatic relevance determination.";
 ---
@@ -80,6 +81,11 @@ const description =
         Because the smoothed solution is differentiable, the cross-validation error has an exact gradient
         with respect to λ and γ. A quasi-Newton method needs a handful of evaluations where a grid needs
         hundreds. Press replay and watch the model improve along the path.
+      </p>
+      <p>
+        You can run the same optimization live: press <em>Tune λ and γ</em> in the
+        <a href={`${base}/#demo`}>classification demo</a> on the home page (or in the regression demo above)
+        and the optimizer runs in your browser, evaluating the CV error and its exact gradient for your own data.
       </p>
       <HpoPath />
     </div>

@@ -35,6 +35,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <span>Loss smoothing δ <output data-out="smoothing"></output></span>
       <input type="range" min="0" max="1" step="0.05" value="0" data-param="smoothing" />
     </label>
+    <div class="btn-row">
+      <button class="btn small primary" type="button" data-tune>Tune λ and γ</button>
+      <button class="btn small" type="button" data-stop hidden>Stop</button>
+      <button class="btn small" type="button" data-watch>Watch SMO</button>
+    </div>
+    <p class="tune-status" role="status" data-status></p>
+    <div class="tune-panel" data-tune-panel hidden><div class="tune-inset" data-inset></div></div>
+    <div class="watch-panel" data-watch-panel hidden>
+      <button class="btn small" type="button" data-play>Pause</button>
+      <input type="range" min="0" max="0" step="1" value="0" data-scrub aria-label="SMO frame" />
+      <button class="btn small" type="button" data-watch-close>Close</button>
+      <output data-watch-out></output>
+    </div>
     <dl class="stats" aria-live="polite">
       <div><dt>samples</dt><dd data-stat="n">–</dd></div>
       <div><dt>support vectors</dt><dd data-stat="sv">–</dd></div>
@@ -42,16 +55,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><dt>training time</dt><dd data-stat="time">–</dd></div>
       <div><dt>training accuracy</dt><dd data-stat="acc">–</dd></div>
       <div><dt>duality gap</dt><dd data-stat="gap">–</dd></div>
+      <div><dt>5-fold CV loss</dt><dd data-stat="cv">–</dd></div>
+      <div><dt>CV evaluations</dt><dd data-stat="evals">–</dd></div>
     </dl>
     <p class="note">
-      Runs the Rust solver <code>smo-solver</code> compiled to WebAssembly (66 KB) directly in your
+      Runs the Rust solver <code>smo-solver</code> compiled to WebAssembly (149 KB) directly in your
       browser. Ringed points are support vectors.
+    </p>
+    <p class="note">
+      <strong>Tune λ and γ</strong> minimizes the 5-fold cross-validation loss (smoothed hinge loss on the held-out folds) with L-BFGS-B, using the
+      exact gradient with respect to log λ and log γ, in a background thread. The gradient needs a smoothed
+      loss, so a smoothing δ of 0 is raised to 0.2 for tuning. <strong>Watch SMO</strong> replays the
+      solver iteration by iteration for the current parameters.
     </p>
   </div>
 </div>
 
 <script>
-  import { getSvmClient, SvmSupersededError } from "../lib/svm-client";
+  import { getSvmClient, SvmCancelledError, SvmSupersededError, type SvmTraceResult, type SvmTrainResult, type SvmTuneProgress } from "../lib/svm-client";
+  import { createPacer, createTuneInset, reducedMotion, type TunePoint } from "../lib/tune-ui";
 
   const root = document.querySelector<HTMLElement>(".demo")!;
   const canvas = root.querySelector("canvas")!;
@@ -62,6 +84,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   let clickClass = 1;
   let pending = 0;
   let keyboardActive = false;
+  const LN10 = Math.LN10;
+  const q = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
+  const sliders = (k: string) => q<HTMLInputElement>(`[data-param=${k}]`);
+  /** Exact (unrounded) parameters set by the tuner; cleared as soon as a slider is moved by hand. */
+  let exact: { lam: number; gamma: number; smoothing: number } | null = null;
+  let busy: "idle" | "tuning" = "idle";
+  let watch: { trace: SvmTraceResult; snapshot: typeof points; frame: number; timer: number; playing: boolean } | null = null;
 
   // deterministic random numbers so that presets look the same on every visit
   function rng(seed: number) {
@@ -99,7 +128,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   function params() {
-    const v = (k: string) => Number(root.querySelector<HTMLInputElement>(`[data-param=${k}]`)!.value);
+    const v = (k: string) => Number(sliders(k).value);
+    if (exact) return exact;
     return { lam: 10 ** v("lam"), gamma: 10 ** v("gamma"), smoothing: v("smoothing") };
   }
 
@@ -123,10 +153,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     return x >= 0.01 && x < 1000 ? x.toPrecision(3) : x.toExponential(1);
   }
 
-  let last: { dec: Float64Array | null; sv: Set<number> } = { dec: null, sv: new Set() };
+  let last: { dec: ArrayLike<number> | null; sv: Set<number> } = { dec: null, sv: new Set() };
   const cursor = { x: 0.5, y: 0.5 };
 
-  function render(dec: Float64Array | null, sv: Set<number>) {
+  function render(dec: ArrayLike<number> | null, sv: Set<number>) {
     last = { dec, sv };
     const W = canvas.width, H = canvas.height;
     const bg = hexToRgb(css("--surface") || "#ffffff");
@@ -210,6 +240,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     }
   }
 
+  function gridPoints() {
+    const m = RES * RES;
+    const grid = new Float64Array(2 * m);
+    for (let j = 0; j < RES; j++) {
+      for (let i = 0; i < RES; i++) {
+        grid[2 * (j * RES + i)] = i / (RES - 1);
+        grid[2 * (j * RES + i) + 1] = j / (RES - 1);
+      }
+    }
+    return grid;
+  }
+
   async function train() {
     const n = points.length;
     setStat("n", String(n));
@@ -222,14 +264,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     }
     if (last.dec) render(last.dec, last.sv); // show the new points right away, the model follows
     const { lam, gamma, smoothing } = params();
-    const m = RES * RES;
-    const grid = new Float64Array(2 * m);
-    for (let j = 0; j < RES; j++) {
-      for (let i = 0; i < RES; i++) {
-        grid[2 * (j * RES + i)] = i / (RES - 1);
-        grid[2 * (j * RES + i) + 1] = j / (RES - 1);
-      }
-    }
+    const grid = gridPoints();
     let r;
     try {
       r = await solver.train({
@@ -238,9 +273,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         dim: 2, kind: "classification", lambda: lam, gamma, smoothing, epsilon: 0, tol: 1e-3, grid,
       });
     } catch (err) {
-      if (!(err instanceof SvmSupersededError)) console.error(err);
+      if (!(err instanceof SvmSupersededError || err instanceof SvmCancelledError)) console.error(err);
       return;
     }
+    showResult(snapshot, r);
+  }
+
+  function showResult(snapshot: typeof points, r: SvmTrainResult) {
+    const n = snapshot.length;
     if (r.steps < 0) {
       for (const k of ["sv", "steps", "time", "acc", "gap"]) setStat(k, "–");
       render(null, new Set());
@@ -262,6 +302,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     root.querySelector("[data-out=lam]")!.textContent = fmt(lam);
     root.querySelector("[data-out=gamma]")!.textContent = fmt(gamma);
     root.querySelector("[data-out=smoothing]")!.textContent = smoothing.toFixed(2);
+    if (busy !== "idle") return; // the tuner owns the picture
+    if (watch) return showFrame(watch.frame);
     cancelAnimationFrame(pending);
     pending = requestAnimationFrame(train);
   }
@@ -273,13 +315,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     });
   }
 
-  root.querySelectorAll("[data-param]").forEach((el) => el.addEventListener("input", schedule));
+  root.querySelectorAll("[data-param]").forEach((el) =>
+    el.addEventListener("input", () => {
+      exact = null;
+      edited();
+    }),
+  );
   root.querySelector("[data-presets]")!.addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest("[data-preset]");
     if (!b) return;
     activate(b.parentElement!, b);
     preset(b.getAttribute("data-preset")!);
-    schedule();
+    edited();
   });
   root.querySelector("[data-classes]")!.addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest("[data-class]");
@@ -291,13 +338,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const r = canvas.getBoundingClientRect();
     const x = (ev.clientX - r.left) / r.width, y = 1 - (ev.clientY - r.top) / r.height;
     points.push({ x, y, c: flip ? -clickClass : clickClass });
-    schedule();
+    edited();
   }
   canvas.addEventListener("click", (ev) => {
+    if (busy !== "idle") return;
     keyboardActive = false;
     addPoint(ev, ev.shiftKey);
   });
   canvas.addEventListener("keydown", (ev) => {
+    if (busy !== "idle") return;
     const step = ev.shiftKey && !["Enter", " "].includes(ev.key) ? 0.1 : 0.02;
     const move: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step],
@@ -308,10 +357,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       cursor.y = Math.min(1, Math.max(0, cursor.y + dy));
     } else if (ev.key === "Enter" || ev.key === " ") {
       points.push({ x: cursor.x, y: cursor.y, c: ev.shiftKey ? -clickClass : clickClass });
-      schedule();
+      edited();
     } else if (ev.key === "Backspace" || ev.key === "Delete") {
       points.pop();
-      schedule();
+      edited();
     } else {
       return;
     }
@@ -326,10 +375,236 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   canvas.addEventListener("blur", () => render(last.dec, last.sv));
   canvas.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
-    addPoint(ev, true);
+    if (busy === "idle") addPoint(ev, true);
   });
   window.addEventListener("themechange", schedule);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", schedule);
+
+  // ---- hyperparameter tuning and SMO replay ----
+  const statusEl = q("[data-status]");
+  const tuneBtn = q<HTMLButtonElement>("[data-tune]");
+  const stopBtn = q<HTMLButtonElement>("[data-stop]");
+  const watchBtn = q<HTMLButtonElement>("[data-watch]");
+  const tunePanel = q("[data-tune-panel]");
+  const watchPanel = q("[data-watch-panel]");
+  const playBtn = q<HTMLButtonElement>("[data-play]");
+  const scrub = q<HTMLInputElement>("[data-scrub]");
+  const watchOut = q("[data-watch-out]");
+  const range = (k: string): [number, number] => [Number(sliders(k).min), Number(sliders(k).max)];
+  const inset = createTuneInset(q("[data-inset]"), { lam: range("lam"), gamma: range("gamma") });
+  const status = (t: string) => (statusEl.textContent = t);
+  let stopped = false;
+  let watchToken = 0;
+
+  /** Data or parameters were changed by the user: the replay and the CV numbers no longer apply. */
+  function edited() {
+    exitWatch();
+    setStat("cv", "–");
+    setStat("evals", "–");
+    status("");
+    schedule();
+  }
+
+  function setLocked(on: boolean) {
+    root.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-param], [data-preset]").forEach((el) => (el.disabled = on));
+    tuneBtn.disabled = on;
+    watchBtn.disabled = on;
+    stopBtn.hidden = !on;
+    canvas.setAttribute("aria-disabled", String(on));
+  }
+
+  /** Moves the sliders (rounded to their step) and the read-outs (exact values) to the parameters. */
+  function showParams(lam: number, gamma: number, smoothing: number) {
+    exact = { lam, gamma, smoothing };
+    sliders("lam").value = String(Math.log10(lam));
+    sliders("gamma").value = String(Math.log10(gamma));
+    sliders("smoothing").value = String(smoothing);
+    q("[data-out=lam]").textContent = fmt(lam);
+    q("[data-out=gamma]").textContent = fmt(gamma);
+    q("[data-out=smoothing]").textContent = smoothing.toFixed(2);
+  }
+
+  const classesOk = (snap: typeof points, min: number) =>
+    snap.filter((p) => p.c > 0).length >= min && snap.filter((p) => p.c < 0).length >= min;
+
+  async function tune() {
+    if (busy !== "idle") return;
+    const snap = points.slice();
+    if (!classesOk(snap, 5)) return status("Tuning needs at least 5 points of each class (5-fold cross-validation).");
+    if (solver.mode === "main") return status("Tuning needs Web Workers, which this browser does not provide.");
+    exitWatch();
+    let { lam, gamma, smoothing } = params();
+    let note = "";
+    if (smoothing <= 0) {
+      smoothing = 0.2;
+      note = " Smoothing δ was 0 and is now 0.2: the hypergradient needs a smoothed loss.";
+    }
+    showParams(lam, gamma, smoothing);
+    busy = "tuning";
+    stopped = false;
+    setLocked(true);
+    stopBtn.focus();
+    tunePanel.hidden = false;
+    const hist: TunePoint[] = [];
+    inset.set(hist);
+    setStat("cv", "–");
+    setStat("evals", "0");
+    status("Tuning…" + note);
+    const pacer = createPacer<SvmTuneProgress>((pr) => {
+      showParams(Math.exp(pr.logLambda), Math.exp(pr.logGamma), smoothing);
+      hist.push({ ll: pr.logLambda / LN10, lg: pr.logGamma / LN10, value: pr.value });
+      inset.set(hist);
+      setStat("cv", pr.value.toFixed(4));
+      setStat("evals", String(pr.evaluation));
+      render(pr.decisionOnGrid, new Set(Array.from(pr.support, Number)));
+    });
+    try {
+      const res = await solver.tune(
+        {
+          x: new Float64Array(snap.flatMap((p) => [p.x, p.y])),
+          y: new Float64Array(snap.map((p) => p.c)),
+          dim: 2, kind: "classification", folds: 5, smoothing, epsilon: 0, tol: 1e-6, trainTol: 1e-3,
+          initial: [Math.log(lam), Math.log(gamma)],
+          lower: [range("lam")[0] * LN10, range("gamma")[0] * LN10],
+          upper: [range("lam")[1] * LN10, range("gamma")[1] * LN10],
+          maxIterations: 40, gradientTolerance: 1e-3, maxEvaluations: 60, grid: gridPoints(),
+        },
+        (pr) => pacer.push(pr),
+      );
+      await pacer.drain();
+      if (stopped) throw new SvmCancelledError();
+      showParams(Math.exp(res.logLambda), Math.exp(res.logGamma), smoothing);
+      showResult(snap, res.final);
+      setStat("cv", res.value.toFixed(4));
+      setStat("evals", String(res.evaluations));
+      const why = res.status === "converged" ? "converged"
+        : res.status === "evaluation-limit" ? "stopped at the evaluation limit"
+        : res.status === "solver-failure" ? "stopped: the solver did not converge at a trial point (best point kept)"
+        : "finished without further progress";
+      status(
+        `Tuning ${why} after ${res.evaluations} evaluations${Number.isFinite(res.iterations) ? ` (${res.iterations} iterations)` : ""} ` +
+          `in ${res.seconds.toFixed(1)} s: λ = ${fmt(Math.exp(res.logLambda))}, γ = ${fmt(Math.exp(res.logGamma))}, ` +
+          `5-fold CV loss ${res.value.toFixed(4)}.` + note,
+      );
+    } catch (err) {
+      pacer.clear();
+      if (err instanceof SvmCancelledError) {
+        status(`Stopped after ${q("[data-stat=evals]").textContent} evaluations; the model shows the last parameters tried.`);
+      } else {
+        console.error(err);
+        status(`Tuning failed: ${err instanceof Error ? err.message : err}`);
+      }
+      busy = "idle";
+      schedule(); // retrain at the displayed parameters (the worker is recreated after a stop)
+    } finally {
+      const focusWasStop = document.activeElement === stopBtn;
+      busy = "idle";
+      setLocked(false);
+      if (focusWasStop) tuneBtn.focus();
+    }
+  }
+
+  stopBtn.addEventListener("click", () => {
+    stopped = true;
+    solver.cancel();
+  });
+  tuneBtn.addEventListener("click", tune);
+
+  // SMO replay
+  function showFrame(i: number) {
+    if (!watch) return;
+    const { trace, snapshot } = watch;
+    const m = RES * RES, n = snapshot.length;
+    watch.frame = i;
+    const sv = new Set<number>();
+    for (let k = 0; k < n; k++) if (Math.abs(trace.coef[i * n + k]) > 1e-12) sv.add(k);
+    render(trace.decision.subarray(i * m, (i + 1) * m), sv);
+    scrub.value = String(i);
+    const gap = trace.frameGap[i];
+    const text = `frame ${i + 1} of ${trace.frames} · SMO step ${trace.frameStep[i].toLocaleString("en")} · duality gap ${Number.isFinite(gap) ? fmt(gap) : "–"}`;
+    watchOut.textContent = text;
+    scrub.setAttribute("aria-valuetext", text);
+  }
+
+  function setPlaying(on: boolean) {
+    if (!watch) return;
+    clearTimeout(watch.timer);
+    watch.playing = on;
+    playBtn.textContent = on ? "Pause" : watch.frame >= watch.trace.frames - 1 ? "Replay" : "Play";
+    if (!on) return;
+    const w = watch;
+    const tick = () => {
+      if (watch !== w) return;
+      if (w.frame >= w.trace.frames - 1) return setPlaying(false);
+      showFrame(w.frame + 1);
+      w.timer = window.setTimeout(tick, 100);
+    };
+    w.timer = window.setTimeout(tick, 100);
+  }
+
+  function exitWatch() {
+    watchToken++;
+    if (watch) clearTimeout(watch.timer);
+    watch = null;
+    watchPanel.hidden = true;
+  }
+
+  async function startWatch() {
+    if (busy !== "idle") return;
+    const snapshot = points.slice();
+    if (snapshot.length < 2 || !classesOk(snapshot, 1)) return status("Add points of both classes first.");
+    exitWatch();
+    const token = watchToken;
+    const { lam, gamma, smoothing } = params();
+    status("Recording the SMO run…");
+    let trace;
+    try {
+      trace = await solver.trace({
+        x: new Float64Array(snapshot.flatMap((p) => [p.x, p.y])),
+        y: new Float64Array(snapshot.map((p) => p.c)),
+        dim: 2, kind: "classification", lambda: lam, gamma, smoothing, epsilon: 0, tol: 1e-3,
+        grid: gridPoints(), maxFrames: 60,
+      });
+    } catch (err) {
+      if (!(err instanceof SvmSupersededError || err instanceof SvmCancelledError)) {
+        console.error(err);
+        status(`Could not record the run: ${err instanceof Error ? err.message : err}`);
+      }
+      return;
+    }
+    if (token !== watchToken) return; // the data changed meanwhile
+    watch = { trace, snapshot, frame: 0, timer: 0, playing: false };
+    scrub.max = String(trace.frames - 1);
+    watchPanel.hidden = false;
+    showFrame(0);
+    if (reducedMotion()) {
+      setPlaying(false);
+      status(`${trace.steps.toLocaleString("en")} SMO steps in ${trace.frames} frames. Use the slider to step through them.`);
+    } else {
+      setPlaying(true);
+      status(`Replaying ${trace.steps.toLocaleString("en")} SMO steps in ${trace.frames} frames.`);
+    }
+    scrub.focus();
+  }
+
+  watchBtn.addEventListener("click", startWatch);
+  playBtn.addEventListener("click", () => {
+    if (!watch) return;
+    if (!watch.playing && watch.frame >= watch.trace.frames - 1) showFrame(0);
+    setPlaying(!watch.playing);
+  });
+  scrub.addEventListener("input", () => {
+    if (!watch) return;
+    setPlaying(false);
+    showFrame(Number(scrub.value));
+    setPlaying(false);
+  });
+  q("[data-watch-close]").addEventListener("click", () => {
+    exitWatch();
+    status("");
+    schedule();
+    watchBtn.focus();
+  });
 
   preset("checkerboard");
   schedule();

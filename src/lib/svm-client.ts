@@ -1,6 +1,14 @@
 // Promise API for the solver worker, with request coalescing and a main-thread fallback.
-import { transferables, type SvmCmd, type SvmCommands, type SvmTrainArgs, type SvmTrainResult } from "./svm-core";
-export type { SvmTrainArgs, SvmTrainResult };
+import { transferables } from "./svm-transfer";
+import {
+  type SvmCmd, type SvmCommands, type SvmProgress, type SvmTrainArgs, type SvmTrainResult,
+  type SvmTuneArgs, type SvmTuneProgress, type SvmTuneResult, type SvmTraceArgs, type SvmTraceResult,
+  type SvmCvArgs, type SvmCvResult,
+} from "./svm-core";
+export type {
+  SvmTrainArgs, SvmTrainResult, SvmTuneArgs, SvmTuneProgress, SvmTuneResult, SvmTraceArgs, SvmTraceResult,
+  SvmCvArgs, SvmCvResult,
+};
 
 /** Rejection reason of a request that was replaced by a newer one of the same command. */
 export class SvmSupersededError extends Error {
@@ -10,14 +18,27 @@ export class SvmSupersededError extends Error {
   }
 }
 
+/** Rejection reason of requests that were abandoned by `SvmClient.cancel()`. */
+export class SvmCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "SvmCancelledError";
+  }
+}
+
 /** The worker itself failed (could not be created or loaded), as opposed to a solver error. */
 class WorkerFailure extends Error {}
 
-type Backend = { run(cmd: string, args: unknown, transfer: Transferable[]): Promise<unknown> };
+type Progress = ((p: unknown) => void) | undefined;
+type Backend = {
+  run(cmd: string, args: unknown, transfer: Transferable[], onProgress: Progress): Promise<unknown>;
+  /** Stops the backend for good; pending requests are rejected with `SvmCancelledError`. */
+  terminate(): void;
+};
 
-function workerBackend(wasmUrl: string): Backend {
+function workerBackend(wasmUrl: string, optimizerUrl: string): Backend {
   const worker = new Worker(new URL("./svm-worker.ts", import.meta.url), { type: "module" });
-  const waiting = new Map<number, { resolve(v: unknown): void; reject(e: unknown): void }>();
+  const waiting = new Map<number, { resolve(v: unknown): void; reject(e: unknown): void; onProgress: Progress }>();
   let nextId = 1;
   let initialised = false;
   const failAll = (msg: string) => {
@@ -27,43 +48,57 @@ function workerBackend(wasmUrl: string): Backend {
     waiting.clear();
   };
   worker.onmessage = (ev: MessageEvent) => {
-    const { id, ok, result, error } = ev.data;
+    const { id, ok, result, error, progress } = ev.data;
     const w = waiting.get(id);
+    if (!w) return;
+    if ("progress" in ev.data) return w.onProgress?.(progress);
     waiting.delete(id);
-    if (w) ok ? w.resolve(result) : w.reject(new Error(error));
+    ok ? w.resolve(result) : w.reject(new Error(error));
   };
   worker.onerror = (ev) => {
     ev.preventDefault();
     failAll(ev.message || "worker error");
   };
   worker.onmessageerror = () => failAll("worker message error");
-  const send = (cmd: string, args: unknown, transfer: Transferable[]) =>
+  const send = (cmd: string, args: unknown, transfer: Transferable[], onProgress?: Progress) =>
     new Promise<unknown>((resolve, reject) => {
       const id = nextId++;
-      waiting.set(id, { resolve, reject });
+      waiting.set(id, { resolve, reject, onProgress });
       worker.postMessage({ id, cmd, args }, transfer);
     });
-  const ready = send("init", { wasmUrl }, []).then(() => {
+  const ready = send("init", { wasmUrl, optimizerUrl }, []).then(() => {
     initialised = true;
   });
   ready.catch(() => {}); // surfaced through the first real request
-  return { run: async (cmd, args, transfer) => (await ready, send(cmd, args, transfer)) };
+  return {
+    run: async (cmd, args, transfer, onProgress) => (await ready, send(cmd, args, transfer, onProgress)),
+    terminate() {
+      worker.terminate();
+      for (const w of waiting.values()) w.reject(new SvmCancelledError());
+      waiting.clear();
+    },
+  };
 }
 
-function localBackend(wasmUrl: string): Backend {
+function localBackend(wasmUrl: string, optimizerUrl: string): Backend {
   const ready = import("./svm-core").then(async ({ createSolverCore }) => {
     const core = createSolverCore();
-    await core.handle("init", { wasmUrl });
+    await core.handle("init", { wasmUrl, optimizerUrl });
     return core;
   });
   // yield to the event loop first so that a stale queued request can still be dropped
-  return { run: async (cmd, args) => (await new Promise((r) => setTimeout(r)), (await ready).handle(cmd, args)) };
+  return {
+    run: async (cmd, args, _transfer, onProgress) =>
+      (await new Promise((r) => setTimeout(r)), (await ready).handle(cmd, args, onProgress)),
+    terminate() {}, // a synchronous main-thread run cannot be interrupted
+  };
 }
 
 type Request = {
   cmd: SvmCmd;
   args: unknown;
   transfer: Transferable[];
+  onProgress?: (p: unknown) => void;
   resolve(v: unknown): void;
   reject(e: unknown): void;
   superseded: boolean;
@@ -81,30 +116,35 @@ export class SvmClient {
   /** "worker" or "main" (fallback); known after the first request has been started. */
   mode: "worker" | "main" | null = null;
 
+  private optimizerUrl: string;
+
   constructor(private wasmUrl: string, private useWorker = true) {
     this.wasmUrl = new URL(wasmUrl, location.href).href;
+    this.optimizerUrl = new URL("svm_browser_optimizer_bg.wasm", this.wasmUrl).href;
   }
 
   private ensureBackend(): Backend {
     if (!this.backend) {
       try {
         if (!this.useWorker || typeof Worker === "undefined") throw new Error("no worker");
-        this.backend = workerBackend(this.wasmUrl);
+        this.backend = workerBackend(this.wasmUrl, this.optimizerUrl);
         this.mode = "worker";
       } catch {
-        this.backend = localBackend(this.wasmUrl);
+        this.backend = localBackend(this.wasmUrl, this.optimizerUrl);
         this.mode = "main";
       }
     }
     return this.backend;
   }
 
-  private call<C extends SvmCmd>(cmd: C, args: SvmCommands[C][0], transfer: Transferable[]): Promise<SvmCommands[C][1]> {
+  private call<C extends SvmCmd>(
+    cmd: C, args: SvmCommands[C][0], transfer: Transferable[], onProgress?: (p: unknown) => void,
+  ): Promise<SvmCommands[C][1]> {
     return new Promise((resolve, reject) => {
       const old = this.queued.get(cmd);
       if (old) old.reject(new SvmSupersededError());
       if (this.inflight?.cmd === cmd) this.inflight.superseded = true;
-      this.queued.set(cmd, { cmd, args, transfer, resolve: resolve as (v: unknown) => void, reject, superseded: false });
+      this.queued.set(cmd, { cmd, args, transfer, onProgress, resolve: resolve as (v: unknown) => void, reject, superseded: false });
       this.pump();
     });
   }
@@ -119,13 +159,15 @@ export class SvmClient {
     try {
       let result: unknown;
       try {
-        result = await this.ensureBackend().run(req.cmd, req.args, req.transfer);
+        result = await this.ensureBackend().run(req.cmd, req.args, req.transfer, (p) => {
+          if (!req.superseded) req.onProgress?.(p);
+        });
       } catch (err) {
         if (!(err instanceof WorkerFailure) || this.mode === "main") throw err;
         // the worker could not be initialised: run the same code on the main thread (args were not transferred)
-        this.backend = localBackend(this.wasmUrl);
+        this.backend = localBackend(this.wasmUrl, this.optimizerUrl);
         this.mode = "main";
-        result = await this.backend.run(req.cmd, req.args, []);
+        result = await this.backend.run(req.cmd, req.args, [], req.onProgress);
       }
       if (req.superseded) req.reject(new SvmSupersededError());
       else req.resolve(result);
@@ -137,10 +179,42 @@ export class SvmClient {
     }
   }
 
+  /**
+   * Abandons all pending and running requests. The worker is terminated (a running `tune` is a
+   * synchronous loop that cannot be interrupted otherwise) and recreated lazily by the next
+   * request, which re-initialises the wasm module. The rejected requests get `SvmCancelledError`.
+   * On the main-thread fallback a running command cannot be interrupted; only queued ones are dropped.
+   */
+  cancel() {
+    for (const q of this.queued.values()) q.reject(new SvmCancelledError());
+    this.queued.clear();
+    if (this.mode === "worker" && this.backend) {
+      this.backend.terminate();
+      this.backend = null;
+    } else if (this.inflight) {
+      this.inflight.superseded = true; // discard the result of the uninterruptible run
+    }
+  }
+
   /** Trains a model and evaluates it on `grid` and on the training points. */
   train(a: SvmTrainArgs): Promise<SvmTrainResult> {
     // the typed arrays are moved to the worker, so pass buffers that the caller does not reuse
     return this.call("train", a, transferables(a));
+  }
+
+  /** One cross-validation evaluation (error and hypergradient). */
+  cv(a: SvmCvArgs): Promise<SvmCvResult> {
+    return this.call("cv", a, transferables(a));
+  }
+
+  /** L-BFGS-B over (log lambda, log gamma); `onProgress` receives every objective evaluation. */
+  tune(a: SvmTuneArgs, onProgress: (p: SvmProgress["tune"]) => void): Promise<SvmTuneResult> {
+    return this.call("tune", a, transferables(a), onProgress as (p: unknown) => void);
+  }
+
+  /** Records an SMO run (at most `maxFrames` frames) with the decision function of every frame. */
+  trace(a: SvmTraceArgs): Promise<SvmTraceResult> {
+    return this.call("trace", a, transferables(a));
   }
 }
 

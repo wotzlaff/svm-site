@@ -472,3 +472,75 @@ img {
   padding: 0.35rem 0.8rem;
   font-size: 0.85rem;
 }
+
+/* interactive tuning (Demo, RegressionDemo) */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.btn:focus-visible,
+.chip:focus-visible,
+.tune-panel input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tune-status {
+  font-size: 0.85rem;
+  color: var(--ink-2);
+  margin: 0.6rem 0 0;
+  min-height: 1.3em;
+}
+
+.tune-panel {
+  margin-top: 0.7rem;
+}
+
+.tune-panel[hidden] {
+  display: none;
+}
+
+.tune-inset {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+}
+
+.tune-inset canvas {
+  width: 100%;
+  aspect-ratio: 250 / 170;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: block;
+}
+
+.watch-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.8rem;
+  margin-top: 0.7rem;
+}
+
+.watch-panel[hidden] {
+  display: none;
+}
+
+.watch-panel input[type="range"] {
+  flex: 1 1 140px;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.watch-panel output {
+  flex: 1 1 100%;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.btn[hidden] {
+  display: none;
+}
